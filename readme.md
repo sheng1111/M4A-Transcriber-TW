@@ -23,7 +23,7 @@ OPENAI_API_KEY=your_openai_api_key
 .
 ├── m4a/                 # 存放原始音檔的目錄
 ├── text/                # 存放轉錄和翻譯結果的目錄
-├── script.py            # 主程式碼檔案
+├── app.py            # 主程式碼檔案
 ├── .env                 # 環境變數檔案 (包含 API 密鑰)
 └── README.md            # 本說明文件
 
@@ -33,7 +33,7 @@ OPENAI_API_KEY=your_openai_api_key
 
 1. 將您需要處理的 .m4a 音檔放置在 m4a 目錄下。
 
-2. 編輯 script.py 的 file_paths 和 output_file 變數，指定要處理的音檔名稱和輸出結果的檔案名稱。
+2. 編輯 app.py 的 file_paths 和 output_file 變數，指定要處理的音檔名稱和輸出結果的檔案名稱。
 
 ```python
 if __name__ == "__main__":
@@ -46,7 +46,7 @@ if __name__ == "__main__":
 3. 執行程式碼：
 
 ```bash
-python script.py
+python app.py
 ```
 
 4. 轉錄與翻譯結果將被保存至 text 目錄中的指定檔案。
@@ -56,7 +56,7 @@ python script.py
 - 音檔過濾：對音檔進行高通、低通濾波和增益控制，以保留語音清晰度並去除噪音。
 - 音檔分割：將音檔分割成小於 15MB 的片段，並導出為 .mp3 格式。
 - 音檔轉錄：使用 OpenAI 的 Whisper 模型將音檔轉錄為文本。
-- 文本翻譯：使用 GPT 將轉錄結果翻譯為繁體中文（臺灣）。
+- 文本翻譯：使用 GPT 將轉錄結果翻譯為繁體中文。
 
 ## 錯誤處理
 
