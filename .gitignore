@@ -1,4 +1,10 @@
 .env
 .venv/
+
+# 忽略 m4a/OLD 和 text/OLD 資料夾內的所有檔案
 m4a/OLD/*
 text/OLD/*
+
+# 強制追蹤 m4a/OLD 和 text/OLD 資料夾本身
+!m4a/OLD/.gitkeep
+!text/OLD/.gitkeep
