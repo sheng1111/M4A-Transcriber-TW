@@ -1,0 +1,4 @@
+.env
+.venv/
+m4a/OLD/*
+text/OLD/*
