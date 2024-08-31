@@ -66,7 +66,7 @@ def transcribe_and_translate_audio(file_path):
                 model="whisper-1",
                 file=audio_file,
                 response_format="text",
-                # prompt="APT, TTP, CNI, PLA, MSS, WannaCry, NCSC, GRU, MISP, RAT, Bob.com, Maltego"
+                # prompt="APT, TTP, CNI, WannaCry, NCSC, GRU, MISP, RAT, Bob.com, Maltego"
             )
         return transcription
     except Exception as e:
