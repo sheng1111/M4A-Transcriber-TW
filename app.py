@@ -146,7 +146,7 @@ class AudioProcessor:
             logging.error(f"轉錄音檔 {file_path} 時發生錯誤: {e}\n{traceback.format_exc()}")
             return ""
 
-    def translate_to_chinese_with_gpt(self, english_text, system_prompt=None):
+    def translate_to_chinese_with_gpt(self, english_text, system_prompt=None, whisper_prompt=None):
         """使用 GPT-4.1 翻譯成繁體中文"""
         try:
             # 預設 system_prompt
@@ -176,6 +176,16 @@ class AudioProcessor:
             # 使用提供的 system_prompt 或預設值
             if system_prompt is None:
                 system_prompt = default_system_prompt
+
+            # 如果有 whisper_prompt，加入到系統提示詞中
+            if whisper_prompt and whisper_prompt.strip():
+                system_prompt += f"""
+
+            # 音檔相關關鍵字與專有名詞
+
+            以下是使用者提供的音檔相關關鍵字與專有名詞，請在翻譯時特別注意這些詞彙的正確性：
+            {whisper_prompt.strip()}
+                """
 
             response = self.client.chat.completions.create(
                 model="gpt-4.1",
@@ -309,8 +319,8 @@ class AudioProcessor:
                     
                     logging.info(f"片段 {index + 1} 轉錄完成，開始翻譯潤飾")
                     
-                    # 翻譯（帶入自訂 system_prompt）
-                    translated_text = self.translate_to_chinese_with_gpt(raw_transcription, gpt_system_prompt)
+                    # 翻譯（帶入自訂 system_prompt 和 whisper_prompt）
+                    translated_text = self.translate_to_chinese_with_gpt(raw_transcription, gpt_system_prompt, whisper_prompt)
                     
                     # 過濾噪聲文本
                     translated_text = self.filter_noise_text(translated_text)
