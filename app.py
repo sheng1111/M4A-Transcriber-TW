@@ -2,6 +2,8 @@ import os
 import traceback
 import logging
 import re
+import argparse
+import shutil
 
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
@@ -35,9 +37,17 @@ class AudioProcessor:
         return OpenAI(api_key=api_key)
     
     def _setup_ffmpeg(self):
-        """設定 FFmpeg 路徑"""
-        AudioSegment.converter = "/usr/bin/ffmpeg"
-        AudioSegment.ffprobe = "/usr/bin/ffprobe"
+        """設定 FFmpeg 路徑，如果預設路徑不存在則嘗試使用系統路徑"""
+        ffmpeg_path = "/usr/bin/ffmpeg"
+        ffprobe_path = "/usr/bin/ffprobe"
+
+        if not os.path.exists(ffmpeg_path):
+            ffmpeg_path = shutil.which("ffmpeg") or "ffmpeg"
+        if not os.path.exists(ffprobe_path):
+            ffprobe_path = shutil.which("ffprobe") or "ffprobe"
+
+        AudioSegment.converter = ffmpeg_path
+        AudioSegment.ffprobe = ffprobe_path
     
     def filter_audio(self, audio, 
                      high_pass_freq=80, 
@@ -382,32 +392,20 @@ class AudioProcessor:
 
 def main():
     """主程式入口"""
+    parser = argparse.ArgumentParser(description="M4A 音檔轉文字工具")
+    parser.add_argument("-i", "--input", nargs="+", required=True, help="要處理的音檔路徑")
+    parser.add_argument("-o", "--output", required=True, help="輸出的文字檔")
+    parser.add_argument("--whisper-prompt", default="", help="Whisper 轉錄提示詞")
+    parser.add_argument("--gpt-system-prompt", default=None, help="自訂 GPT 系統提示詞")
+    args = parser.parse_args()
+
     try:
-        # 初始化音檔處理器
-        processor = AudioProcessor(audio_dir='./speech', text_dir='./text')
-        
-        # 音檔路徑設定
-        file_paths = [os.path.join(processor.audio_dir, "新錄音 3.m4a")]
-        output_file = os.path.join(processor.text_dir, "新錄音 3.txt")
+        processor = AudioProcessor()
 
-        # 自訂提示詞設定
-        # Whisper 轉錄提示詞（可放入關鍵字或專有名詞協助辨識）
-        whisper_prompt = ""  # 預設為空值
-        
-        # GPT 翻譯系統提示詞（None 會使用函數內建的預設值）
-        gpt_system_prompt = None
-        
-        # 若要自訂 GPT 系統提示詞，可取消註解並修改：
-        # gpt_system_prompt = """
-        # 你是一個專業的語音轉錄後處理專家...
-        # """
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
-        # 確保輸出資料夾存在
-        os.makedirs(processor.text_dir, exist_ok=True)
-
-        # 開始處理音檔
-        processor.process_files(file_paths, output_file, whisper_prompt, gpt_system_prompt)
-        logging.info(f"轉錄與翻譯完成，結果已儲存在 {output_file} 中。")
+        processor.process_files(args.input, args.output, args.whisper_prompt, args.gpt_system_prompt)
+        logging.info(f"轉錄與翻譯完成，結果已儲存在 {args.output} 中。")
         
     except ValueError as e:
         logging.error(f"設定錯誤: {e}")
