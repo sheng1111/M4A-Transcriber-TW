@@ -105,7 +105,27 @@ graph TB
    **Windows:**
    下載並安裝 [FFmpeg](https://ffmpeg.org/download.html)
 
-4. **設定 API Key**
+4. **安裝 PortAudio (錄音裝置支援)**
+
+   **Ubuntu/Debian:**
+   ```bash
+   sudo apt-get update
+   sudo apt-get install portaudio19-dev
+   ```
+
+   **macOS:**
+   ```bash
+   brew install portaudio
+   ```
+
+   **Windows:**
+   建議使用 [pipwin](https://github.com/lepisma/pipwin) 安裝：
+   ```bash
+   pip install pipwin
+   pipwin install pyaudio
+   ```
+
+5. **設定 API Key**
    
    建立 `.env` 檔案：
    ```bash
@@ -171,20 +191,13 @@ python gui_app.py
 
 ### 命令列介面
 
+可直接透過參數指定要處理的檔案與輸出位置：
+
 ```bash
-python app.py
-```
-
-在 `app.py` 的 `main()` 函數中修改設定：
-
-```python
-# 指定要處理的音檔
-file_paths = ["./speech/example.m4a"]
-output_file = "./text/example.txt"
-
-# 自訂提示詞（選用）
-whisper_prompt = "包含特殊詞彙或人名"
-gpt_system_prompt = "自訂的翻譯指令"
+python app.py -i ./speech/example.m4a ./speech/example2.m4a \
+             -o ./text/output.txt \
+             --whisper-prompt "包含特殊詞彙或人名" \
+             --gpt-system-prompt "自訂的翻譯指令"
 ```
 
 ## 📁 目錄結構
