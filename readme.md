@@ -1,4 +1,4 @@
-# M4A 音檔轉錄工具 - 專業版
+# M4A 音檔轉文字工具
 
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://python.org)
 [![OpenAI](https://img.shields.io/badge/OpenAI-Whisper%20%2B%20GPT-green.svg)](https://openai.com)
