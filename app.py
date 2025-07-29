@@ -4,6 +4,17 @@ import logging
 import re
 import argparse
 import shutil
+from pathlib import Path
+
+
+def find_ffmpeg_path(executable_name: str, default_path: str) -> str:
+    """Return a valid FFmpeg-related executable path."""
+    if os.path.exists(default_path):
+        return default_path
+    path = shutil.which(executable_name)
+    if path:
+        return path
+    return executable_name
 
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +24,24 @@ from pydub import AudioSegment
 # 設定 Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+
+def _validate_paths(input_paths, output_path):
+    """Validate and normalize user supplied paths."""
+    base_dir = Path.cwd().resolve()
+    abs_output = Path(output_path).resolve()
+    if os.path.commonpath([abs_output, base_dir]) != str(base_dir):
+        raise ValueError("輸出路徑不合法，僅允許當前資料夾內的路徑")
+
+    normalized_inputs = []
+    for p in input_paths:
+        abs_in = Path(p).resolve()
+        if os.path.commonpath([abs_in, base_dir]) != str(base_dir):
+            raise ValueError(f"輸入路徑不合法: {p}")
+        if not abs_in.exists():
+            raise FileNotFoundError(f"檔案不存在: {p}")
+        normalized_inputs.append(str(abs_in))
+
+    return normalized_inputs, str(abs_output)
 
 class AudioProcessor:
     """音檔處理器類別，負責音檔轉錄、翻譯和處理流程"""
@@ -38,13 +67,8 @@ class AudioProcessor:
     
     def _setup_ffmpeg(self):
         """設定 FFmpeg 路徑，如果預設路徑不存在則嘗試使用系統路徑"""
-        ffmpeg_path = "/usr/bin/ffmpeg"
-        ffprobe_path = "/usr/bin/ffprobe"
-
-        if not os.path.exists(ffmpeg_path):
-            ffmpeg_path = shutil.which("ffmpeg") or "ffmpeg"
-        if not os.path.exists(ffprobe_path):
-            ffprobe_path = shutil.which("ffprobe") or "ffprobe"
+        ffmpeg_path = find_ffmpeg_path("ffmpeg", "/usr/bin/ffmpeg")
+        ffprobe_path = find_ffmpeg_path("ffprobe", "/usr/bin/ffprobe")
 
         AudioSegment.converter = ffmpeg_path
         AudioSegment.ffprobe = ffprobe_path
@@ -400,13 +424,17 @@ def main():
     args = parser.parse_args()
 
     try:
+        inputs, output = _validate_paths(args.input, args.output)
+
         processor = AudioProcessor()
 
-        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
 
-        processor.process_files(args.input, args.output, args.whisper_prompt, args.gpt_system_prompt)
-        logging.info(f"轉錄與翻譯完成，結果已儲存在 {args.output} 中。")
-        
+        processor.process_files(inputs, output, args.whisper_prompt, args.gpt_system_prompt)
+        logging.info(f"轉錄與翻譯完成，結果已儲存在 {output} 中。")
+
+    except (FileNotFoundError, PermissionError) as e:
+        logging.error(f"檔案存取錯誤: {e}")
     except ValueError as e:
         logging.error(f"設定錯誤: {e}")
     except Exception as e:
