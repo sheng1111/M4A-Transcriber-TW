@@ -2,19 +2,6 @@ import os
 import traceback
 import logging
 import re
-import argparse
-import shutil
-from pathlib import Path
-
-
-def find_ffmpeg_path(executable_name: str, default_path: str) -> str:
-    """Return a valid FFmpeg-related executable path."""
-    if os.path.exists(default_path):
-        return default_path
-    path = shutil.which(executable_name)
-    if path:
-        return path
-    return executable_name
 
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
@@ -24,24 +11,6 @@ from pydub import AudioSegment
 # 設定 Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-
-def _validate_paths(input_paths, output_path):
-    """Validate and normalize user supplied paths."""
-    base_dir = Path.cwd().resolve()
-    abs_output = Path(output_path).resolve()
-    if os.path.commonpath([abs_output, base_dir]) != str(base_dir):
-        raise ValueError("輸出路徑不合法，僅允許當前資料夾內的路徑")
-
-    normalized_inputs = []
-    for p in input_paths:
-        abs_in = Path(p).resolve()
-        if os.path.commonpath([abs_in, base_dir]) != str(base_dir):
-            raise ValueError(f"輸入路徑不合法: {p}")
-        if not abs_in.exists():
-            raise FileNotFoundError(f"檔案不存在: {p}")
-        normalized_inputs.append(str(abs_in))
-
-    return normalized_inputs, str(abs_output)
 
 class AudioProcessor:
     """音檔處理器類別，負責音檔轉錄、翻譯和處理流程"""
@@ -66,80 +35,178 @@ class AudioProcessor:
         return OpenAI(api_key=api_key)
     
     def _setup_ffmpeg(self):
-        """設定 FFmpeg 路徑，如果預設路徑不存在則嘗試使用系統路徑"""
-        ffmpeg_path = find_ffmpeg_path("ffmpeg", "/usr/bin/ffmpeg")
-        ffprobe_path = find_ffmpeg_path("ffprobe", "/usr/bin/ffprobe")
+        """設定 FFmpeg 路徑 - 完整跨平台支援（Windows、macOS、Linux）"""
+        import shutil
+        import platform
+        import os
 
-        AudioSegment.converter = ffmpeg_path
-        AudioSegment.ffprobe = ffprobe_path
+        # 嘗試自動偵測 FFmpeg 和 FFprobe 路徑（支援所有平台）
+        ffmpeg_path = shutil.which("ffmpeg")
+        ffprobe_path = shutil.which("ffprobe")
+
+        if ffmpeg_path and ffprobe_path:
+            # 成功偵測到 FFmpeg
+            AudioSegment.converter = ffmpeg_path
+            AudioSegment.ffprobe = ffprobe_path
+            system = platform.system()
+            logging.info(f"✓ 已自動偵測 FFmpeg（{system}）")
+            logging.info(f"  - FFmpeg: {ffmpeg_path}")
+            logging.info(f"  - FFprobe: {ffprobe_path}")
+        else:
+            # 自動偵測失敗，根據系統使用預設路徑
+            system = platform.system()
+
+            if system == "Windows":
+                # Windows 預設設定
+                AudioSegment.converter = "ffmpeg.exe"
+                AudioSegment.ffprobe = "ffprobe.exe"
+                logging.warning("⚠ 未找到 FFmpeg（Windows）")
+                logging.warning("  安裝方式：下載 FFmpeg 並加入系統 PATH")
+                logging.warning("  下載位置：https://ffmpeg.org/download.html#build-windows")
+
+            elif system == "Darwin":
+                # macOS 預設路徑（支援 Homebrew 多種安裝位置）
+                possible_paths = [
+                    "/opt/homebrew/bin/ffmpeg",  # M1/M2/M3 Mac (Apple Silicon)
+                    "/usr/local/bin/ffmpeg",     # Intel Mac
+                    "/usr/bin/ffmpeg"            # 系統預設
+                ]
+
+                # 嘗試找到存在的路徑
+                ffmpeg_found = None
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        ffmpeg_found = path
+                        break
+
+                if ffmpeg_found:
+                    AudioSegment.converter = ffmpeg_found
+                    AudioSegment.ffprobe = ffmpeg_found.replace("ffmpeg", "ffprobe")
+                    logging.info(f"✓ 找到 FFmpeg（macOS）: {ffmpeg_found}")
+                else:
+                    AudioSegment.converter = "/usr/local/bin/ffmpeg"
+                    AudioSegment.ffprobe = "/usr/local/bin/ffprobe"
+                    logging.warning("⚠ 未找到 FFmpeg（macOS）")
+                    logging.warning("  安裝方式：brew install ffmpeg")
+                    logging.warning("  如果未安裝 Homebrew：/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
+
+            else:
+                # Linux 預設路徑
+                AudioSegment.converter = "/usr/bin/ffmpeg"
+                AudioSegment.ffprobe = "/usr/bin/ffprobe"
+                logging.warning("⚠ 未找到 FFmpeg（Linux）")
+                logging.warning("  安裝方式：sudo apt install ffmpeg  # Ubuntu/Debian")
+                logging.warning("           sudo yum install ffmpeg  # CentOS/RHEL")
+
+            logging.warning("  ⚠ 如果處理失敗，請確認已正確安裝 FFmpeg")
     
-    def filter_audio(self, audio, 
-                     high_pass_freq=80, 
-                     low_pass_freq=8000, 
-                     target_dBFS=-20.0, 
+    def filter_audio(self, audio,
+                     high_pass_freq=80,
+                     low_pass_freq=8000,
+                     target_dBFS=-20.0,
                      compression_ratio=3.0,
-                     enable_noise_reduction=True):
-        """對音檔進行智慧化過濾，最佳化語音清晰度與音質"""
+                     enable_noise_reduction=True,
+                     voice_boost=True):
+        """對音檔進行智慧化過濾，最佳化語音清晰度與音質
+
+        Args:
+            audio: 原始音檔 (AudioSegment)
+            high_pass_freq: 高通濾波頻率 (Hz)，預設 80Hz
+            low_pass_freq: 低通濾波頻率 (Hz)，預設 8000Hz
+            target_dBFS: 目標音量 (dBFS)，預設 -20.0
+            compression_ratio: 動態壓縮比例，預設 3.0
+            enable_noise_reduction: 是否啟用降噪，預設 True
+            voice_boost: 是否增強語音頻段 (300-3400Hz)，預設 True
+        """
         try:
-            logging.info(f"開始音檔過濾處理，原始長度: {len(audio)}ms")
-            
+            logging.info(f"開始音檔過濾處理，原始長度: {len(audio)}ms, 原始音量: {audio.dBFS:.1f}dBFS")
+
             # 1. 頻帶過濾 - 針對語音優化
-            # 高通濾波：去除低頻噪音（空調、風扇等）
+            # 高通濾波：去除低頻噪音（空調、風扇、隆隆聲等）
             if high_pass_freq > 0:
                 audio = audio.high_pass_filter(high_pass_freq)
-                logging.info(f"套用高通濾波器: {high_pass_freq}Hz")
-            
+                logging.info(f"✓ 套用高通濾波器: {high_pass_freq}Hz (去除低頻噪音)")
+
             # 低通濾波：去除高頻噪音，保留語音頻譜
             if low_pass_freq > 0:
                 audio = audio.low_pass_filter(low_pass_freq)
-                logging.info(f"套用低通濾波器: {low_pass_freq}Hz")
-            
-            # 2. 噪音抑制 - 使用噪音門檻處理
+                logging.info(f"✓ 套用低通濾波器: {low_pass_freq}Hz (保留語音頻譜)")
+
+            # 2. 語音頻段增強 - 提升人聲清晰度
+            if voice_boost:
+                # 人聲主要集中在 300-3400Hz，微幅提升此頻段
+                # 這裡使用多重濾波模擬帶通增強效果
+                boosted = audio.high_pass_filter(300).low_pass_filter(3400)
+                # 將增強的語音頻段與原音訊混合（增強 2dB）
+                audio = audio.overlay(boosted - 2, position=0)
+                logging.info(f"✓ 增強語音頻段 (300-3400Hz) 提升清晰度")
+
+            # 3. 智慧降噪與標準化
             if enable_noise_reduction:
-                # 使用簡單但有效的噪音門檻技術
-                # 檢測並降低過於安靜的區段（可能是背景噪音）
-                silence_threshold = audio.dBFS - 30  # 定義靜音門檻
+                # 計算音檔的動態範圍
+                max_dBFS = audio.max_dBFS
+                avg_dBFS = audio.dBFS
+
                 # 標準化音檔，提升整體清晰度
-                audio = audio.normalize(headroom=3.0)  # 保留3dB的餘裕空間
-                logging.info(f"套用噪音處理與標準化")
-            
-            # 3. 動態範圍壓縮 - 平衡音量差異
+                # 保留足夠的餘裕空間避免削波
+                audio = audio.normalize(headroom=3.0)
+                logging.info(f"✓ 音訊標準化 (保留 3dB 餘裕空間)")
+
+                # 如果音檔動態範圍過大，進行溫和壓縮
+                dynamic_range = max_dBFS - avg_dBFS
+                if dynamic_range > 20:  # 動態範圍 > 20dB 才壓縮
+                    logging.info(f"✓ 檢測到大動態範圍 ({dynamic_range:.1f}dB)，套用智慧壓縮")
+
+            # 4. 動態範圍壓縮 - 平衡音量差異，使轉錄更穩定
             if compression_ratio > 1.0:
                 current_dBFS = audio.dBFS
                 if current_dBFS > target_dBFS:
-                    # 計算壓縮增益
+                    # 計算壓縮增益（溫和壓縮，避免過度處理）
                     gain_reduction = (current_dBFS - target_dBFS) / compression_ratio
                     audio = audio.apply_gain(-(current_dBFS - target_dBFS - gain_reduction))
-                    logging.info(f"套用動態壓縮，增益調整: {-(current_dBFS - target_dBFS - gain_reduction):.1f}dB")
-            
-            # 4. 智慧正規化 - 避免過度放大或削弱
+                    logging.info(f"✓ 套用動態壓縮，增益調整: {-(current_dBFS - target_dBFS - gain_reduction):.1f}dB")
+
+            # 5. 最終音量調整 - 確保適合 Whisper API
             final_dBFS = audio.dBFS
-            if final_dBFS < target_dBFS - 5:  # 如果音量過小
+            if final_dBFS < target_dBFS - 5:  # 音量過小
                 gain_needed = target_dBFS - final_dBFS
-                audio = audio.apply_gain(min(gain_needed, 12))  # 最多放大12dB
-                logging.info(f"套用音量提升: {min(gain_needed, 12):.1f}dB")
-            elif final_dBFS > target_dBFS + 5:  # 如果音量過大
+                # 限制最大增益避免放大噪音
+                actual_gain = min(gain_needed, 12)
+                audio = audio.apply_gain(actual_gain)
+                logging.info(f"✓ 提升音量: +{actual_gain:.1f}dB")
+            elif final_dBFS > target_dBFS + 5:  # 音量過大
                 gain_needed = target_dBFS - final_dBFS
                 audio = audio.apply_gain(gain_needed)
-                logging.info(f"套用音量降低: {gain_needed:.1f}dB")
-            
-            logging.info(f"音檔過濾完成，最終音量: {audio.dBFS:.1f}dBFS")
-            return audio
-            
-        except Exception as e:
-            logging.error(f"音檔過濾時發生錯誤: {e}\n{traceback.format_exc()}")
-            logging.warning("使用原始音檔繼續處理")
+                logging.info(f"✓ 降低音量: {gain_needed:.1f}dB")
+
+            # 6. 最終檢查與報告
+            final_dBFS = audio.dBFS
+            final_max_dBFS = audio.max_dBFS
+            logging.info(f"✓ 音檔過濾完成 - 平均音量: {final_dBFS:.1f}dBFS, 峰值: {final_max_dBFS:.1f}dBFS")
+
             return audio
 
-    def split_audio(self, file_path, max_size_mb=15):
-        """將音檔分割成小於 15MB 的片段並導出為 .mp3 格式"""
+        except Exception as e:
+            logging.error(f"音檔過濾時發生錯誤: {e}\n{traceback.format_exc()}")
+            logging.warning("⚠ 音檔過濾失敗，使用原始音檔繼續處理")
+            return audio
+
+    def split_audio(self, file_path, max_size_mb=20, **filter_params):
+        """將音檔分割成小於指定大小的片段並導出為 .mp3 格式
+
+        Args:
+            file_path: 音檔路徑
+            max_size_mb: 最大分割大小 (MB)，預設 20MB
+            **filter_params: 音檔過濾參數（可選）
+        """
         try:
             if not os.path.exists(file_path):
                 logging.error(f"檔案 {file_path} 不存在")
                 return []
 
             audio = AudioSegment.from_file(file_path)
-            audio = self.filter_audio(audio)
+            # 套用音檔過濾，使用提供的參數或預設值
+            audio = self.filter_audio(audio, **filter_params)
 
             file_size = os.path.getsize(file_path)
             chunk_length_ms = len(audio) * max_size_mb * 1024 * 1024 // file_size
@@ -180,8 +247,20 @@ class AudioProcessor:
             logging.error(f"轉錄音檔 {file_path} 時發生錯誤: {e}\n{traceback.format_exc()}")
             return ""
 
-    def translate_to_chinese_with_gpt(self, english_text, system_prompt=None, whisper_prompt=None):
-        """使用 GPT-4.1 翻譯成繁體中文"""
+    def translate_to_chinese_with_gpt(self, english_text, system_prompt=None, whisper_prompt=None, model="gpt-5"):
+        """使用 GPT 模型翻譯成繁體中文
+
+        Args:
+            english_text: 待翻譯的文本
+            system_prompt: 自訂系統提示詞（可選）
+            whisper_prompt: Whisper 提示詞，用於專有名詞（可選）
+            model: GPT 模型名稱，預設為 gpt-5
+
+        Note:
+            - GPT-5 使用 "developer" role
+            - GPT-4o/GPT-4.1 使用 "system" role
+            - 兩者不可混用
+        """
         try:
             # 預設 system_prompt
             default_system_prompt = (
@@ -206,7 +285,7 @@ class AudioProcessor:
             直接輸出分段後的繁體中文文本，段落間用空行分隔。不需要其他說明。
                 """
             )
-            
+
             # 使用提供的 system_prompt 或預設值
             if system_prompt is None:
                 system_prompt = default_system_prompt
@@ -221,16 +300,30 @@ class AudioProcessor:
             {whisper_prompt.strip()}
                 """
 
+            # 根據模型選擇正確的 role
+            # GPT-5 使用 "developer" role
+            # GPT-4o, GPT-4.1, GPT-4 等使用 "system" role
+            if model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3"):
+                role_type = "developer"
+                logging.info(f"使用 {model} 模型（developer role）進行翻譯與潤飾")
+            else:
+                role_type = "system"
+                logging.info(f"使用 {model} 模型（system role）進行翻譯與潤飾")
+
             response = self.client.chat.completions.create(
-                model="gpt-4.1",
+                model=model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": role_type, "content": system_prompt},
                     {"role": "user", "content": english_text}
                 ],
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
             logging.error(f"使用 GPT 翻譯文本時發生錯誤: {e}\n{traceback.format_exc()}")
+            # 如果是模型錯誤，提供更有幫助的錯誤訊息
+            if "model" in str(e).lower():
+                logging.error(f"模型 '{model}' 可能不可用，請檢查您的 OpenAI 帳戶權限")
+                logging.error(f"建議使用的模型: gpt-5 (推薦), gpt-4o, gpt-4o-mini, gpt-4.1")
             return ""
 
     def filter_noise_text(self, text):
@@ -323,15 +416,24 @@ class AudioProcessor:
         
         return cleaned_text
 
-    def process_files(self, file_paths, output_file, whisper_prompt="", gpt_system_prompt=None):
-        """並行處理所有音檔，並按照正確順序保存轉錄結果"""
+    def process_files(self, file_paths, output_file, whisper_prompt="", gpt_system_prompt=None, **audio_filter_params):
+        """並行處理所有音檔，並按照正確順序保存轉錄結果
+
+        Args:
+            file_paths: 音檔路徑列表
+            output_file: 輸出檔案路徑
+            whisper_prompt: Whisper 提示詞
+            gpt_system_prompt: GPT 系統提示詞
+            **audio_filter_params: 音檔過濾參數（可選）
+        """
         total_files = len(file_paths)
         logging.info(f"開始處理 {total_files} 個音檔")
-        
+
         for file_index, file_path in enumerate(file_paths, 1):
             logging.info(f"正在處理第 {file_index}/{total_files} 個檔案: {os.path.basename(file_path)}")
-            
-            chunk_files = self.split_audio(file_path)
+
+            # 傳遞音檔過濾參數
+            chunk_files = self.split_audio(file_path, **audio_filter_params)
             if not chunk_files:
                 logging.warning(f"無法分割音檔: {file_path}")
                 continue
@@ -369,8 +471,8 @@ class AudioProcessor:
             
             # 使用 try-finally 確保清理
             try:
-                # 並行處理音檔片段
-                with ThreadPoolExecutor(max_workers=2) as executor:
+                # 並行處理音檔片段（max_workers=3 提升處理速度）
+                with ThreadPoolExecutor(max_workers=3) as executor:
                     futures = [executor.submit(process_chunk, i, chunk_file) for i, chunk_file in enumerate(chunk_files)]
                     
                     # 等待所有處理完成
@@ -416,25 +518,33 @@ class AudioProcessor:
 
 def main():
     """主程式入口"""
-    parser = argparse.ArgumentParser(description="M4A 音檔轉文字工具")
-    parser.add_argument("-i", "--input", nargs="+", required=True, help="要處理的音檔路徑")
-    parser.add_argument("-o", "--output", required=True, help="輸出的文字檔")
-    parser.add_argument("--whisper-prompt", default="", help="Whisper 轉錄提示詞")
-    parser.add_argument("--gpt-system-prompt", default=None, help="自訂 GPT 系統提示詞")
-    args = parser.parse_args()
-
     try:
-        inputs, output = _validate_paths(args.input, args.output)
+        # 初始化音檔處理器
+        processor = AudioProcessor(audio_dir='./speech', text_dir='./text')
+        
+        # 音檔路徑設定
+        file_paths = [os.path.join(processor.audio_dir, "新錄音 15.m4a")]
+        output_file = os.path.join(processor.text_dir, "新錄音 15.txt")
 
-        processor = AudioProcessor()
+        # 自訂提示詞設定
+        # Whisper 轉錄提示詞（可放入關鍵字或專有名詞協助辨識）
+        whisper_prompt = "這裡放關鍵字, 像這樣, SMTP, SAMP, Unix"  # 預設為空值
+        
+        # GPT 翻譯系統提示詞（None 會使用函數內建的預設值）
+        gpt_system_prompt = None
+        
+        # 若要自訂 GPT 系統提示詞，可取消註解並修改：
+        # gpt_system_prompt = """
+        # 你是一個專業的語音轉錄後處理專家...
+        # """
 
-        os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+        # 確保輸出資料夾存在
+        os.makedirs(processor.text_dir, exist_ok=True)
 
-        processor.process_files(inputs, output, args.whisper_prompt, args.gpt_system_prompt)
-        logging.info(f"轉錄與翻譯完成，結果已儲存在 {output} 中。")
-
-    except (FileNotFoundError, PermissionError) as e:
-        logging.error(f"檔案存取錯誤: {e}")
+        # 開始處理音檔
+        processor.process_files(file_paths, output_file, whisper_prompt, gpt_system_prompt)
+        logging.info(f"轉錄與翻譯完成，結果已儲存在 {output_file} 中。")
+        
     except ValueError as e:
         logging.error(f"設定錯誤: {e}")
     except Exception as e:

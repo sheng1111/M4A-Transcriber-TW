@@ -13,15 +13,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 class TranscriptionApp:
     """音檔轉錄GUI應用程式"""
-    
+
     def __init__(self, root):
         """初始化應用程式"""
         self.root = root
         self.audio_processor = None
         self.is_processing = False
+        self.should_stop = False  # 新增：停止處理標誌
         self.processing_thread = None
         self.defaults = self._load_defaults()
         self.api_key_visible = False
+        self.current_file_index = 0  # 新增：當前處理檔案索引
+        self.total_files = 0  # 新增：總檔案數
+        self.current_chunk = 0  # 新增：當前處理片段
+        self.total_chunks = 0  # 新增：總片段數
         self.setup_window()
         self.setup_ui()
         self.setup_logging_handler()
@@ -223,30 +228,81 @@ class TranscriptionApp:
         # 音檔處理設定
         audio_section = ttk.LabelFrame(basic_frame, text="音檔處理設定", padding="10")
         audio_section.pack(fill="x", pady=(0, 10))
-        
+
         # 分割大小設定
         split_frame = ttk.Frame(audio_section)
-        split_frame.pack(fill="x")
-        ttk.Label(split_frame, text=f"分割大小 (MB) [預設: {self.defaults['max_size_mb']}]:").pack(side="left")
+        split_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(split_frame, text=f"分割大小 (MB):").pack(side="left")
         self.max_size_mb = tk.IntVar(value=self.defaults['max_size_mb'])
         size_spinbox = ttk.Spinbox(split_frame, from_=5, to=25, width=10, textvariable=self.max_size_mb)
         size_spinbox.pack(side="left", padx=(5, 0))
-        
-        # 音檔過濾參數顯示（唯讀）
-        filter_info_frame = ttk.Frame(audio_section)
-        filter_info_frame.pack(fill="x", pady=(10, 0))
-        
-        filter_info = f"""智慧音檔過濾參數 (由 AudioProcessor 自動處理):
-• 高通濾波: {self.defaults['high_pass_freq']}Hz (去除低頻噪音)
-• 低通濾波: {self.defaults['low_pass_freq']}Hz (保留語音頻譜)
-• 目標音量: {self.defaults['target_dBFS']}dBFS
-• 壓縮比例: {self.defaults['compression_ratio']:1.1f}
-• 降噪處理: {'啟用' if self.defaults['enable_noise_reduction'] else '停用'}"""
-        
-        filter_label = tk.Label(filter_info_frame, text=filter_info, 
-                               justify="left", font=("Arial", 9), 
-                               bg="#f0f0f0", relief="sunken", padx=10, pady=8)
-        filter_label.pack(fill="x")
+        ttk.Label(split_frame, text=f" [預設: {self.defaults['max_size_mb']} MB]", font=("Arial", 9)).pack(side="left", padx=(5, 0))
+
+        # 音檔過濾參數 - 可編輯
+        ttk.Label(audio_section, text="音檔過濾參數（進階）：", font=("Arial", 10, "bold")).pack(anchor="w", pady=(5, 5))
+
+        # 建立兩欄佈局
+        params_container = ttk.Frame(audio_section)
+        params_container.pack(fill="x")
+
+        left_col = ttk.Frame(params_container)
+        left_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        right_col = ttk.Frame(params_container)
+        right_col.pack(side="left", fill="x", expand=True)
+
+        # 左欄 - 頻率設定
+        # 高通濾波
+        hp_frame = ttk.Frame(left_col)
+        hp_frame.pack(fill="x", pady=2)
+        ttk.Label(hp_frame, text="高通濾波 (Hz):").pack(side="left")
+        self.high_pass_freq = tk.IntVar(value=self.defaults['high_pass_freq'])
+        hp_spinbox = ttk.Spinbox(hp_frame, from_=0, to=500, width=10, textvariable=self.high_pass_freq)
+        hp_spinbox.pack(side="left", padx=(5, 5))
+        ttk.Label(hp_frame, text="去除低頻噪音", font=("Arial", 8), foreground="gray").pack(side="left")
+
+        # 低通濾波
+        lp_frame = ttk.Frame(left_col)
+        lp_frame.pack(fill="x", pady=2)
+        ttk.Label(lp_frame, text="低通濾波 (Hz):").pack(side="left")
+        self.low_pass_freq = tk.IntVar(value=self.defaults['low_pass_freq'])
+        lp_spinbox = ttk.Spinbox(lp_frame, from_=3000, to=20000, width=10, increment=1000, textvariable=self.low_pass_freq)
+        lp_spinbox.pack(side="left", padx=(5, 5))
+        ttk.Label(lp_frame, text="保留語音頻譜", font=("Arial", 8), foreground="gray").pack(side="left")
+
+        # 右欄 - 音量設定
+        # 目標音量
+        dbfs_frame = ttk.Frame(right_col)
+        dbfs_frame.pack(fill="x", pady=2)
+        ttk.Label(dbfs_frame, text="目標音量 (dBFS):").pack(side="left")
+        self.target_dBFS = tk.DoubleVar(value=self.defaults['target_dBFS'])
+        dbfs_spinbox = ttk.Spinbox(dbfs_frame, from_=-30.0, to=-10.0, width=10, increment=1.0, textvariable=self.target_dBFS)
+        dbfs_spinbox.pack(side="left", padx=(5, 5))
+        ttk.Label(dbfs_frame, text="標準化音量", font=("Arial", 8), foreground="gray").pack(side="left")
+
+        # 壓縮比例
+        comp_frame = ttk.Frame(right_col)
+        comp_frame.pack(fill="x", pady=2)
+        ttk.Label(comp_frame, text="壓縮比例:").pack(side="left")
+        self.compression_ratio = tk.DoubleVar(value=self.defaults['compression_ratio'])
+        comp_spinbox = ttk.Spinbox(comp_frame, from_=1.0, to=10.0, width=10, increment=0.5, textvariable=self.compression_ratio)
+        comp_spinbox.pack(side="left", padx=(5, 5))
+        ttk.Label(comp_frame, text="平衡音量差異", font=("Arial", 8), foreground="gray").pack(side="left")
+
+        # 選項區
+        options_frame = ttk.Frame(audio_section)
+        options_frame.pack(fill="x", pady=(10, 0))
+
+        self.enable_noise_reduction = tk.BooleanVar(value=self.defaults['enable_noise_reduction'])
+        ttk.Checkbutton(options_frame, text="啟用降噪處理", variable=self.enable_noise_reduction).pack(side="left", padx=(0, 15))
+
+        self.voice_boost = tk.BooleanVar(value=True)
+        ttk.Checkbutton(options_frame, text="增強語音頻段 (300-3400Hz)", variable=self.voice_boost).pack(side="left")
+
+        # 重設按鈕
+        reset_btn_frame = ttk.Frame(audio_section)
+        reset_btn_frame.pack(fill="x", pady=(5, 0))
+        ttk.Button(reset_btn_frame, text="重設為預設值", command=self.reset_audio_params).pack(side="left")
         
     def setup_advanced_tab(self):
         """設定進階設定頁面"""
@@ -283,6 +339,17 @@ class TranscriptionApp:
         self.gpt_system_prompt.delete("1.0", tk.END)
         self.gpt_system_prompt.insert("1.0", self.defaults['gpt_system_prompt'])
         self.update_status("GPT 系統提示詞已重設為預設值")
+
+    def reset_audio_params(self):
+        """重設音檔過濾參數為預設值"""
+        self.high_pass_freq.set(self.defaults['high_pass_freq'])
+        self.low_pass_freq.set(self.defaults['low_pass_freq'])
+        self.target_dBFS.set(self.defaults['target_dBFS'])
+        self.compression_ratio.set(self.defaults['compression_ratio'])
+        self.enable_noise_reduction.set(self.defaults['enable_noise_reduction'])
+        self.voice_boost.set(True)
+        self.update_status("音檔過濾參數已重設為預設值")
+        messagebox.showinfo("重設成功", "音檔過濾參數已重設為預設值")
         
     def setup_result_tab(self):
         """設定結果檢視頁面"""
@@ -329,16 +396,17 @@ class TranscriptionApp:
         if not self.output_dir.get():
             messagebox.showerror("錯誤", "請先設定輸出資料夾")
             return
-            
-        text_files = [f for f in Path(self.output_dir.get()).rglob("*.txt") if f.is_file()]
+
+        # 只載入根目錄的 .txt 檔案，排除子目錄（如 OLD 資料夾）
+        text_files = [f for f in Path(self.output_dir.get()).glob("*.txt") if f.is_file()]
         if not text_files:
             messagebox.showinfo("資訊", "輸出資料夾中沒有找到轉錄結果檔案。")
             return
-            
+
         self.result_listbox.delete(0, tk.END)
         for file_path in text_files:
             self.result_listbox.insert(tk.END, file_path.name)
-        
+
         self.update_status(f"已載入 {len(text_files)} 個轉錄結果檔案")
             
     def clear_results(self):
@@ -570,92 +638,180 @@ class TranscriptionApp:
             
     def start_transcription(self):
         """開始轉錄處理"""
-        # 驗證API Key
+        # 1. 驗證 API Key
         api_key = self.api_key_entry.get().strip()
         if not api_key:
             messagebox.showerror("錯誤", "請先設定 OpenAI API Key")
             self.notebook.select(0)  # 切換到基本設定頁面
             return
-        
-        # 驗證輸入
+
+        # 2. 驗證輸入檔案
         if not self.input_files:
             messagebox.showerror("錯誤", "請選擇至少一個音檔")
+            self.notebook.select(0)  # 切換到基本設定頁面
             return
-            
+
+        # 3. 驗證檔案是否存在
+        missing_files = [f for f in self.input_files if not os.path.exists(f)]
+        if missing_files:
+            messagebox.showerror("錯誤",
+                               f"以下檔案不存在：\n{chr(10).join(os.path.basename(f) for f in missing_files[:5])}"
+                               + (f"\n... 還有 {len(missing_files)-5} 個檔案" if len(missing_files) > 5 else ""))
+            return
+
+        # 4. 驗證輸出資料夾
         if not self.output_dir.get():
             messagebox.showerror("錯誤", "請設定輸出資料夾")
+            self.notebook.select(0)  # 切換到基本設定頁面
             return
-            
-        # 確保輸出資料夾存在
-        os.makedirs(self.output_dir.get(), exist_ok=True)
-        
-        # 設定UI狀態
+
+        # 5. 確保輸出資料夾存在且可寫入
+        try:
+            os.makedirs(self.output_dir.get(), exist_ok=True)
+            # 測試寫入權限
+            test_file = os.path.join(self.output_dir.get(), '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+        except Exception as e:
+            messagebox.showerror("錯誤", f"無法寫入輸出資料夾：{self.output_dir.get()}\n錯誤：{str(e)}")
+            return
+
+        # 6. 確認開始處理
+        file_count = len(self.input_files)
+        total_size = sum(os.path.getsize(f) for f in self.input_files) / (1024*1024)  # MB
+        confirm_msg = f"準備處理 {file_count} 個音檔（總大小 {total_size:.1f} MB）\n\n是否開始轉錄？"
+
+        if not messagebox.askyesno("確認開始", confirm_msg):
+            return
+
+        # 7. 設定UI狀態
         self.is_processing = True
+        self.should_stop = False
         self.start_button.config(state="disabled")
         self.stop_button.config(state="normal")
         self.progress_var.set(0)
+        self.total_files = file_count
+        self.current_file_index = 0
         self.update_status("初始化處理...")
-        
-        # 切換到日誌頁面
+
+        # 8. 切換到日誌頁面
         self.notebook.select(3)  # 日誌頁面現在是第4個
-        
-        # 在新執行緒中執行轉錄
+
+        # 9. 在新執行緒中執行轉錄
         self.processing_thread = threading.Thread(target=self.process_transcription)
         self.processing_thread.daemon = True
         self.processing_thread.start()
-        
+
     def stop_transcription(self):
         """停止轉錄處理"""
-        self.is_processing = False
-        self.update_status("正在停止處理...")
+        if not self.is_processing:
+            return
+
+        if messagebox.askyesno("確認停止", "確定要停止處理嗎？\n已完成的檔案會被保留。"):
+            self.should_stop = True
+            self.is_processing = False
+            self.stop_button.config(state="disabled")
+            self.update_status("正在停止處理，請稍候...")
+            logging.warning("使用者要求停止處理")
         
     def process_transcription(self):
         """執行轉錄處理 - 全部委託給 AudioProcessor"""
+        completed_files = []
+        failed_files = []
+
         try:
             # 設定API Key到環境變數
             api_key = self.api_key_entry.get().strip()
             os.environ['OPENAI_API_KEY'] = api_key
-            
+
             # 收集用戶設定
             whisper_prompt = self.whisper_prompt.get("1.0", tk.END).strip()
             gpt_system_prompt = self.gpt_system_prompt.get("1.0", tk.END).strip()
-            
+
+            # 收集音檔過濾參數
+            audio_filter_params = {
+                'high_pass_freq': self.high_pass_freq.get(),
+                'low_pass_freq': self.low_pass_freq.get(),
+                'target_dBFS': self.target_dBFS.get(),
+                'compression_ratio': self.compression_ratio.get(),
+                'enable_noise_reduction': self.enable_noise_reduction.get(),
+                'voice_boost': self.voice_boost.get()
+            }
+
+            logging.info(f"音檔過濾參數: {audio_filter_params}")
+
             # 初始化 AudioProcessor
             self.audio_processor = AudioProcessor(text_dir=self.output_dir.get())
-            
-            total_files = len(self.input_files)
-            
+
+            self.total_files = len(self.input_files)
+
             # 逐一處理每個檔案
             for file_index, file_path in enumerate(self.input_files):
-                if not self.is_processing:
-                    self.root.after(0, lambda: self.update_status("處理已停止"))
+                # 檢查是否應該停止
+                if self.should_stop or not self.is_processing:
+                    self.root.after(0, lambda: self.update_status(f"處理已停止 - 已完成 {len(completed_files)}/{self.total_files} 個檔案"))
                     break
-                    
-                # 更新進度
-                progress = (file_index / total_files) * 100
+
+                self.current_file_index = file_index + 1
+                base_name = os.path.basename(file_path)
+
+                # 更新狀態
+                status_msg = f"處理檔案 {self.current_file_index}/{self.total_files}: {base_name}"
+                self.root.after(0, lambda msg=status_msg: self.update_status(msg))
+                logging.info(f"{'='*60}")
+                logging.info(status_msg)
+                logging.info(f"{'='*60}")
+
+                # 更新整體進度
+                progress = (file_index / self.total_files) * 100
                 self.root.after(0, lambda p=progress: self.progress_var.set(p))
-                
-                # 產生輸出檔名
-                base_name = os.path.splitext(os.path.basename(file_path))[0]
-                output_file = os.path.join(self.output_dir.get(), f"{base_name}.txt")
-                
-                # 完全委託給 AudioProcessor 處理
-                self.audio_processor.process_files(
-                    file_paths=[file_path], 
-                    output_file=output_file, 
-                    whisper_prompt=whisper_prompt, 
-                    gpt_system_prompt=gpt_system_prompt if gpt_system_prompt.strip() else None
-                )
-                
+
+                try:
+                    # 產生輸出檔名
+                    output_base_name = os.path.splitext(base_name)[0]
+                    output_file = os.path.join(self.output_dir.get(), f"{output_base_name}.txt")
+
+                    # 完全委託給 AudioProcessor 處理，包含音檔過濾參數
+                    self.audio_processor.process_files(
+                        file_paths=[file_path],
+                        output_file=output_file,
+                        whisper_prompt=whisper_prompt,
+                        gpt_system_prompt=gpt_system_prompt if gpt_system_prompt.strip() else None,
+                        **audio_filter_params  # 傳遞音檔過濾參數
+                    )
+
+                    completed_files.append(base_name)
+                    logging.info(f"✓ 檔案處理完成: {base_name}")
+
+                except Exception as file_error:
+                    failed_files.append((base_name, str(file_error)))
+                    logging.error(f"✗ 檔案處理失敗: {base_name}")
+                    logging.error(f"錯誤詳情: {file_error}")
+
+                    # 詢問是否繼續處理下一個檔案
+                    if file_index < self.total_files - 1:  # 如果還有下一個檔案
+                        should_continue = messagebox.askyesno(
+                            "處理錯誤",
+                            f"處理 {base_name} 時發生錯誤：\n{str(file_error)}\n\n是否繼續處理剩餘檔案？"
+                        )
+                        if not should_continue:
+                            self.should_stop = True
+                            break
+
             # 處理完成
-            if self.is_processing:
+            if not self.should_stop:
                 self.root.after(0, lambda: self.progress_var.set(100))
-                self.root.after(0, lambda: self.show_completion())
-            
+                self.root.after(0, lambda: self.show_completion(completed_files, failed_files))
+            else:
+                self.root.after(0, lambda: self.show_partial_completion(completed_files, failed_files))
+
         except Exception as e:
-            # 錯誤處理也委託給 AudioProcessor 的日誌系統
-            logging.error(f"GUI處理過程發生錯誤: {e}")
-            self.root.after(0, lambda: self.show_error(str(e)))
+            # 錯誤處理
+            logging.error(f"GUI處理過程發生嚴重錯誤: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            self.root.after(0, lambda err=str(e): self.show_error(err))
         finally:
             self.root.after(0, self.reset_ui_state)
             
@@ -663,16 +819,47 @@ class TranscriptionApp:
         """更新狀態顯示"""
         self.status_label.config(text=message)
         
-    def show_completion(self):
+    def show_completion(self, completed_files, failed_files):
         """顯示完成訊息"""
         self.update_status("轉錄完成")
-        
+
         # 切換到結果檢視頁面並載入結果
         self.notebook.select(2)  # 結果檢視頁面是第3個標籤頁
         self.load_results()
-        
-        messagebox.showinfo("完成", f"轉錄已完成！\n結果儲存在：{self.output_dir.get()}\n\n已自動切換到「結果檢視」頁面")
-        
+
+        # 建立詳細的完成訊息
+        msg = f"轉錄完成！\n\n"
+        msg += f"成功: {len(completed_files)} 個檔案\n"
+        if failed_files:
+            msg += f"失敗: {len(failed_files)} 個檔案\n"
+        msg += f"\n結果儲存在：{self.output_dir.get()}"
+
+        if failed_files:
+            msg += f"\n\n失敗檔案："
+            for fname, _ in failed_files[:3]:  # 只顯示前3個
+                msg += f"\n• {fname}"
+            if len(failed_files) > 3:
+                msg += f"\n... 還有 {len(failed_files)-3} 個"
+
+        messagebox.showinfo("完成", msg)
+
+    def show_partial_completion(self, completed_files, failed_files):
+        """顯示部分完成訊息"""
+        self.update_status("處理已停止")
+
+        # 切換到結果檢視頁面並載入結果
+        if completed_files:
+            self.notebook.select(2)  # 結果檢視頁面是第3個標籤頁
+            self.load_results()
+
+        msg = f"處理已停止\n\n"
+        msg += f"已完成: {len(completed_files)}/{self.total_files} 個檔案\n"
+        if failed_files:
+            msg += f"失敗: {len(failed_files)} 個檔案\n"
+        msg += f"\n已完成的結果已儲存在：{self.output_dir.get()}"
+
+        messagebox.showwarning("部分完成", msg)
+
     def show_error(self, error_msg):
         """顯示錯誤訊息"""
         self.update_status("處理失敗")
