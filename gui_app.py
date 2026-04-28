@@ -6,7 +6,16 @@ import logging
 import inspect
 from pathlib import Path
 from dotenv import load_dotenv, set_key
-from app import AudioProcessor
+from app import (
+    AudioProcessor,
+    DEFAULT_TRANSCRIPTION_MODEL,
+    DEFAULT_TRANSCRIPTION_LANGUAGE,
+    DEFAULT_TRANSLATION_MODEL,
+    DEFAULT_GPT_SYSTEM_PROMPT,
+    DEFAULT_KEYWORDS,
+    APP_VERSION,
+    SUPPORTED_TRANSCRIPTION_MODELS,
+)
 
 # 設定 Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -44,6 +53,7 @@ class TranscriptionApp:
         # 從 split_audio 方法取得預設分割大小
         split_signature = inspect.signature(AudioProcessor.split_audio)
         defaults['max_size_mb'] = split_signature.parameters['max_size_mb'].default
+        defaults['max_duration_min'] = split_signature.parameters['max_duration_min'].default
         
         # 從 filter_audio 方法取得預設音檔過濾參數
         filter_signature = inspect.signature(AudioProcessor.filter_audio)
@@ -52,25 +62,12 @@ class TranscriptionApp:
         defaults['target_dBFS'] = filter_signature.parameters['target_dBFS'].default
         defaults['compression_ratio'] = filter_signature.parameters['compression_ratio'].default
         defaults['enable_noise_reduction'] = filter_signature.parameters['enable_noise_reduction'].default
+        defaults['transcription_model'] = DEFAULT_TRANSCRIPTION_MODEL
+        defaults['translation_model'] = DEFAULT_TRANSLATION_MODEL
+        defaults['transcription_language'] = DEFAULT_TRANSCRIPTION_LANGUAGE
         
-        # 從 AudioProcessor 源碼中提取預設 GPT 系統提示詞
-        defaults['gpt_system_prompt'] = """你是一個專業的文本校正和翻譯專家，專門處理whisper語音轉文字後的內容，將文本翻譯成繁體中文（臺灣），並進行校正和分段。
-# 任務要求
-
-1. **翻譯**: 將文本翻譯為繁體中文（臺灣）
-2. **校正**: 修正語音轉文字可能產生的錯誤，根據上下文進行合理修正
-3. **去重**: 刪除重複的語句和推廣用語
-4. **分段**: 將長文本按照邏輯主題進行分段，每段之間用空行分隔
-5. **整理**: 確保文本結構清晰，易於閱讀
-
-# 分段原則
-
-- 每段長度適中（約100-200字）
-- 段落之間用空行分隔
-
-# 輸出格式
-
-直接輸出分段後的繁體中文文本，段落間用空行分隔。不需要其他說明。"""
+        defaults['gpt_system_prompt'] = DEFAULT_GPT_SYSTEM_PROMPT
+        defaults['keywords'] = DEFAULT_KEYWORDS
         
         return defaults
     
@@ -140,25 +137,25 @@ class TranscriptionApp:
         # 主容器
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill="both", expand=True)
-        
+
+        # 底部控制區必須先 pack，才不會被 notebook 擠掉
+        self.setup_control_area(main_frame)
+
         # 建立標籤頁
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill="both", expand=True)
-        
+
         # 基本設定頁面（包含API設定）
         self.setup_basic_tab()
-        
+
         # 進階設定頁面
         self.setup_advanced_tab()
-        
+
         # 結果檢視頁面
         self.setup_result_tab()
-        
+
         # 日誌頁面
         self.setup_log_tab()
-        
-        # 底部控制區
-        self.setup_control_area(main_frame)
     
 
         
@@ -191,7 +188,7 @@ class TranscriptionApp:
         info_text = """使用說明：
 • 請在上方輸入您的 OpenAI API Key
 • API Key 會自動儲存至 .env 檔案中
-• 請確保您的 API Key 有足夠的額度使用 Whisper 和 GPT 服務
+• 請確保您的 API Key 有足夠的額度使用 OpenAI 轉錄和 GPT 服務
 • 如需申請 API Key，請至 https://platform.openai.com/api-keys"""
         
         info_label = tk.Label(info_frame, text=info_text, 
@@ -237,6 +234,14 @@ class TranscriptionApp:
         size_spinbox = ttk.Spinbox(split_frame, from_=5, to=25, width=10, textvariable=self.max_size_mb)
         size_spinbox.pack(side="left", padx=(5, 0))
         ttk.Label(split_frame, text=f" [預設: {self.defaults['max_size_mb']} MB]", font=("Arial", 9)).pack(side="left", padx=(5, 0))
+
+        duration_frame = ttk.Frame(audio_section)
+        duration_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(duration_frame, text="最長片段 (分鐘):").pack(side="left")
+        self.max_duration_min = tk.IntVar(value=self.defaults['max_duration_min'])
+        duration_spinbox = ttk.Spinbox(duration_frame, from_=3, to=30, width=10, textvariable=self.max_duration_min)
+        duration_spinbox.pack(side="left", padx=(5, 0))
+        ttk.Label(duration_frame, text=f" [預設: {self.defaults['max_duration_min']} 分鐘]", font=("Arial", 9)).pack(side="left", padx=(5, 0))
 
         # 音檔過濾參數 - 可編輯
         ttk.Label(audio_section, text="音檔過濾參數（進階）：", font=("Arial", 10, "bold")).pack(anchor="w", pady=(5, 5))
@@ -309,14 +314,59 @@ class TranscriptionApp:
         advanced_frame = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(advanced_frame, text="進階設定")
         
-        # Whisper 設定
-        whisper_section = ttk.LabelFrame(advanced_frame, text="Whisper 轉錄設定", padding="10")
+        # 轉錄設定
+        whisper_section = ttk.LabelFrame(advanced_frame, text="OpenAI 轉錄設定", padding="10")
         whisper_section.pack(fill="x", pady=(0, 10))
+
+        model_frame = ttk.Frame(whisper_section)
+        model_frame.pack(fill="x", pady=(0, 8))
+        ttk.Label(model_frame, text="轉錄模型:").pack(side="left")
+        self.transcription_model = tk.StringVar(value=self.defaults['transcription_model'])
+        ttk.Combobox(
+            model_frame,
+            textvariable=self.transcription_model,
+            values=SUPPORTED_TRANSCRIPTION_MODELS,
+            state="readonly",
+            width=28
+        ).pack(side="left", padx=(5, 10))
+
+        ttk.Label(model_frame, text="翻譯模型:").pack(side="left")
+        self.translation_model = tk.StringVar(value=self.defaults['translation_model'])
+        ttk.Entry(model_frame, textvariable=self.translation_model, width=20).pack(side="left", padx=(5, 0))
+
+        language_frame = ttk.Frame(whisper_section)
+        language_frame.pack(fill="x", pady=(0, 8))
+        ttk.Label(language_frame, text="轉錄語言:").pack(side="left")
+        self.transcription_language = tk.StringVar(value=self.defaults['transcription_language'])
+        ttk.Entry(language_frame, textvariable=self.transcription_language, width=10).pack(side="left", padx=(5, 5))
+        ttk.Label(language_frame, text="例如 zh；留空則自動偵測", font=("Arial", 8), foreground="gray").pack(side="left")
         
-        ttk.Label(whisper_section, text="轉錄提示詞 (可輸入專有名詞協助辨識):").pack(anchor="w")
-        self.whisper_prompt = tk.Text(whisper_section, height=3, wrap="word")
-        self.whisper_prompt.pack(fill="x", pady=(5, 0))
-        
+        # 關鍵字區塊
+        keyword_section = ttk.LabelFrame(advanced_frame, text="關鍵字與專有名詞", padding="10")
+        keyword_section.pack(fill="x", pady=(0, 10))
+
+        # 說明文字（根據模型動態更新）
+        self._keyword_hint_var = tk.StringVar()
+        self._keyword_hint_label = ttk.Label(keyword_section, textvariable=self._keyword_hint_var,
+                                             font=("Arial", 8), foreground="gray", wraplength=600, justify="left")
+        self._keyword_hint_label.pack(anchor="w", pady=(0, 4))
+
+        self.whisper_prompt = tk.Text(keyword_section, height=3, wrap="word")
+        self.whisper_prompt.insert("1.0", self.defaults['keywords'])
+        self.whisper_prompt.pack(fill="x")
+
+        keyword_btn_frame = ttk.Frame(keyword_section)
+        keyword_btn_frame.pack(fill="x", pady=(4, 0))
+        ttk.Label(keyword_btn_frame,
+                  text="範例：神通, 愛德萬, host, SIE",
+                  font=("Arial", 8), foreground="#888").pack(side="left")
+        ttk.Button(keyword_btn_frame, text="重設為預設關鍵字",
+                   command=self._reset_keywords).pack(side="right")
+
+        # 監聽轉錄模型切換，即時更新說明
+        self.transcription_model.trace_add("write", lambda *_: self._update_keyword_hint())
+        self._update_keyword_hint()
+
         # GPT 設定
         gpt_section = ttk.LabelFrame(advanced_frame, text="GPT 翻譯潤飾設定", padding="10")
         gpt_section.pack(fill="both", expand=True)
@@ -334,6 +384,23 @@ class TranscriptionApp:
         reset_frame.pack(fill="x", pady=(5, 0))
         ttk.Button(reset_frame, text="重設為預設值", command=self.reset_gpt_prompt).pack(side="left")
         
+    def _reset_keywords(self):
+        self.whisper_prompt.delete("1.0", tk.END)
+        self.whisper_prompt.insert("1.0", self.defaults['keywords'])
+        self.update_status("關鍵字已重設為預設值")
+
+    def _update_keyword_hint(self):
+        """根據目前選擇的轉錄模型，更新關鍵字欄位的說明文字"""
+        model = self.transcription_model.get() if hasattr(self, 'transcription_model') else DEFAULT_TRANSCRIPTION_MODEL
+        gpt_transcribe = ("gpt-4o-transcribe", "gpt-4o-mini-transcribe")
+        if model in gpt_transcribe:
+            hint = (f"使用 {model} 時：關鍵字不會傳入轉錄階段（該模型會直接輸出 prompt），"
+                    "但會加入 GPT 翻譯潤飾的系統提示詞，協助修正專有名詞。")
+        else:
+            hint = (f"使用 {model} 時：關鍵字會同時傳入轉錄 API（prompt 參數）及 GPT 翻譯潤飾，"
+                    "有助於提升專有名詞辨識準確度。")
+        self._keyword_hint_var.set(hint)
+
     def reset_gpt_prompt(self):
         """重設GPT提示詞為預設值"""
         self.gpt_system_prompt.delete("1.0", tk.END)
@@ -348,6 +415,7 @@ class TranscriptionApp:
         self.compression_ratio.set(self.defaults['compression_ratio'])
         self.enable_noise_reduction.set(self.defaults['enable_noise_reduction'])
         self.voice_boost.set(True)
+        self.max_duration_min.set(self.defaults['max_duration_min'])
         self.update_status("音檔過濾參數已重設為預設值")
         messagebox.showinfo("重設成功", "音檔過濾參數已重設為預設值")
         
@@ -526,7 +594,7 @@ class TranscriptionApp:
     def setup_control_area(self, parent):
         """設定控制區域"""
         control_frame = ttk.Frame(parent, padding="10")
-        control_frame.pack(fill="x", side="bottom")
+        control_frame.pack(fill="x", side="bottom", anchor="s")
         
         # 進度條
         progress_frame = ttk.LabelFrame(control_frame, text="處理進度", padding="5")
@@ -555,7 +623,7 @@ class TranscriptionApp:
         
     def setup_logging_handler(self):
         """設定日誌處理器"""
-        self.log_handler = GuiLogHandler(self.log_text)
+        self.log_handler = GuiLogHandler(self.root, self.log_text)
         self.log_handler.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         self.log_handler.setFormatter(formatter)
@@ -568,6 +636,10 @@ class TranscriptionApp:
             # 更新UI顯示
             self.output_dir.set(self.defaults['text_dir'])
             self.max_size_mb.set(self.defaults['max_size_mb'])
+            self.max_duration_min.set(self.defaults['max_duration_min'])
+            self.transcription_model.set(self.defaults['transcription_model'])
+            self.translation_model.set(self.defaults['translation_model'])
+            self.transcription_language.set(self.defaults['transcription_language'])
             
             # 更新GPT系統提示詞
             self.gpt_system_prompt.delete("1.0", tk.END)
@@ -635,6 +707,26 @@ class TranscriptionApp:
         except Exception as e:
             self.update_status("連線測試失敗")
             messagebox.showerror("連線測試", f"連線失敗：{str(e)}")
+
+    def collect_processing_options(self):
+        """在主執行緒收集 GUI 狀態，背景執行緒只讀取快照。"""
+        return {
+            'whisper_prompt': self.whisper_prompt.get("1.0", tk.END).strip(),
+            'gpt_system_prompt': self.gpt_system_prompt.get("1.0", tk.END).strip(),
+            'transcription_model': self.transcription_model.get().strip() or DEFAULT_TRANSCRIPTION_MODEL,
+            'translation_model': self.translation_model.get().strip() or DEFAULT_TRANSLATION_MODEL,
+            'transcription_language': self.transcription_language.get().strip(),
+            'max_size_mb': self.max_size_mb.get(),
+            'max_duration_min': self.max_duration_min.get(),
+            'audio_filter_params': {
+                'high_pass_freq': self.high_pass_freq.get(),
+                'low_pass_freq': self.low_pass_freq.get(),
+                'target_dBFS': self.target_dBFS.get(),
+                'compression_ratio': self.compression_ratio.get(),
+                'enable_noise_reduction': self.enable_noise_reduction.get(),
+                'voice_boost': self.voice_boost.get()
+            }
+        }
             
     def start_transcription(self):
         """開始轉錄處理"""
@@ -693,6 +785,7 @@ class TranscriptionApp:
         self.progress_var.set(0)
         self.total_files = file_count
         self.current_file_index = 0
+        self.processing_options = self.collect_processing_options()
         self.update_status("初始化處理...")
 
         # 8. 切換到日誌頁面
@@ -726,19 +819,22 @@ class TranscriptionApp:
             os.environ['OPENAI_API_KEY'] = api_key
 
             # 收集用戶設定
-            whisper_prompt = self.whisper_prompt.get("1.0", tk.END).strip()
-            gpt_system_prompt = self.gpt_system_prompt.get("1.0", tk.END).strip()
+            options = self.processing_options
+            whisper_prompt = options['whisper_prompt']
+            gpt_system_prompt = options['gpt_system_prompt']
+            transcription_model = options['transcription_model']
+            translation_model = options['translation_model']
+            transcription_language = options['transcription_language']
+            max_size_mb = options['max_size_mb']
+            max_duration_min = options['max_duration_min']
 
             # 收集音檔過濾參數
-            audio_filter_params = {
-                'high_pass_freq': self.high_pass_freq.get(),
-                'low_pass_freq': self.low_pass_freq.get(),
-                'target_dBFS': self.target_dBFS.get(),
-                'compression_ratio': self.compression_ratio.get(),
-                'enable_noise_reduction': self.enable_noise_reduction.get(),
-                'voice_boost': self.voice_boost.get()
-            }
+            audio_filter_params = options['audio_filter_params']
 
+            logging.info(f"轉錄模型: {transcription_model}")
+            logging.info(f"翻譯模型: {translation_model}")
+            logging.info(f"轉錄語言: {transcription_language or 'auto'}")
+            logging.info(f"片段限制: {max_size_mb}MB / {max_duration_min} 分鐘")
             logging.info(f"音檔過濾參數: {audio_filter_params}")
 
             # 初始化 AudioProcessor
@@ -778,6 +874,12 @@ class TranscriptionApp:
                         output_file=output_file,
                         whisper_prompt=whisper_prompt,
                         gpt_system_prompt=gpt_system_prompt if gpt_system_prompt.strip() else None,
+                        transcription_model=transcription_model,
+                        translation_model=translation_model,
+                        transcription_language=transcription_language,
+                        max_size_mb=max_size_mb,
+                        max_duration_min=max_duration_min,
+                        should_stop=lambda: self.should_stop or not self.is_processing,
                         **audio_filter_params  # 傳遞音檔過濾參數
                     )
 
@@ -789,15 +891,8 @@ class TranscriptionApp:
                     logging.error(f"✗ 檔案處理失敗: {base_name}")
                     logging.error(f"錯誤詳情: {file_error}")
 
-                    # 詢問是否繼續處理下一個檔案
-                    if file_index < self.total_files - 1:  # 如果還有下一個檔案
-                        should_continue = messagebox.askyesno(
-                            "處理錯誤",
-                            f"處理 {base_name} 時發生錯誤：\n{str(file_error)}\n\n是否繼續處理剩餘檔案？"
-                        )
-                        if not should_continue:
-                            self.should_stop = True
-                            break
+                    if file_index < self.total_files - 1:
+                        logging.warning("繼續處理剩餘檔案")
 
             # 處理完成
             if not self.should_stop:
@@ -898,7 +993,7 @@ class TranscriptionApp:
 功能特色：
 • 支援多種音檔格式 (M4A, MP3, WAV, FLAC, AAC)
 • 智慧音檔過濾與降噪處理
-• 使用 OpenAI Whisper 進行高精度轉錄
+• 使用 OpenAI gpt-4o-transcribe 進行高精度轉錄
 • GPT 語意潤飾與繁體中文翻譯
 • 批次處理多個檔案
 • 可自訂轉錄與翻譯提示詞
@@ -909,24 +1004,34 @@ class TranscriptionApp:
 當前 AudioProcessor 預設設定：
 • 預設輸出目錄: {self.defaults['text_dir']}
 • 預設分割大小: {self.defaults['max_size_mb']}MB
+• 預設片段長度: {self.defaults['max_duration_min']} 分鐘
+• 預設轉錄模型: {self.defaults['transcription_model']}
+• 預設翻譯模型: {self.defaults['translation_model']}
 • 音檔過濾: {self.defaults['high_pass_freq']}Hz - {self.defaults['low_pass_freq']}Hz
 
 開發者：Sheng1111
-版本：2.1 - 整合API設定與基本設定"""
+版本：{APP_VERSION}"""
         messagebox.showinfo("關於", about_text)
 
 
 class GuiLogHandler(logging.Handler):
     """GUI日誌處理器 - 將 app.py 的日誌顯示在GUI中"""
     
-    def __init__(self, text_widget):
+    def __init__(self, root, text_widget):
         super().__init__()
+        self.root = root
         self.text_widget = text_widget
         
     def emit(self, record):
         """發送日誌訊息到文字元件"""
         try:
             msg = self.format(record)
+            self.root.after(0, self._append, msg)
+        except Exception:
+            pass
+
+    def _append(self, msg):
+        try:
             self.text_widget.config(state="normal")
             self.text_widget.insert(tk.END, msg + "\n")
             self.text_widget.see(tk.END)

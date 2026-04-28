@@ -2,14 +2,51 @@ import os
 import traceback
 import logging
 import re
+import math
+import tempfile
+import shutil
 
+from pathlib import Path
 from dotenv import load_dotenv
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 from pydub import AudioSegment
 
 # 設定 Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+DEFAULT_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
+DEFAULT_TRANSLATION_MODEL = "gpt-5.4-mini"
+DEFAULT_TRANSCRIPTION_LANGUAGE = "zh"
+DEFAULT_KEYWORDS = "Unix, 神通, host"  # 在此修改關鍵字，CLI 與 GUI 重設預設值時共用
+APP_VERSION = "2.3.0"
+SUPPORTED_TRANSCRIPTION_MODELS = (
+    "gpt-4o-transcribe",
+    "gpt-4o-mini-transcribe",
+    "whisper-1",
+)
+
+DEFAULT_GPT_SYSTEM_PROMPT = """你是一個專業的語音轉文字後處理專家，專門將語音轉錄結果整理成易讀的繁體中文（臺灣）。
+
+# 輸入說明
+輸入為多段音檔分段轉錄後合併的結果，可能含有轉錄錯誤、口語重複、以及分段邊界產生的內容重複。
+
+# 任務（依優先序）
+
+1. **去除重複段落**：若有完全相同或高度相似的段落重複出現（轉錄模型的已知問題），只保留第一次出現的版本，直接刪除後續重複
+2. **去除口語贅詞**：刪除明顯的口語重複，例如「那麼那麼那麼」、「對對對對對」、連續三次以上的相同詞語
+3. **簡繁轉換**：全文統一為繁體中文（臺灣），使用臺灣慣用詞彙
+4. **臺灣專有名詞**：人名地名採臺灣慣用譯法（特朗普→川普、普京→普丁）
+5. **校正轉錄錯誤**：修正明顯因發音相似導致的錯字（如「神通」、「愛德萬」等專有名詞請保留）
+6. **分段**：依主題邏輯分段，每段約 150–250 字，段落間空行分隔
+
+# 嚴禁
+- 不得添加原文沒有的資訊
+- 不得省略實質對話內容
+- 不得意譯或重新詮釋
+
+# 輸出格式
+直接輸出繁體中文文本，不加任何說明、標題或標記。"""
 
 
 class AudioProcessor:
@@ -67,7 +104,7 @@ class AudioProcessor:
             elif system == "Darwin":
                 # macOS 預設路徑（支援 Homebrew 多種安裝位置）
                 possible_paths = [
-                    "/opt/homebrew/bin/ffmpeg",  # M1/M2/M3 Mac (Apple Silicon)
+                    "/opt/homebrew/bin/ffmpeg",  # M1/M2/M3/M4/M5 Mac (Apple Silicon)
                     "/usr/local/bin/ffmpeg",     # Intel Mac
                     "/usr/bin/ffmpeg"            # 系統預設
                 ]
@@ -166,7 +203,7 @@ class AudioProcessor:
                     audio = audio.apply_gain(-(current_dBFS - target_dBFS - gain_reduction))
                     logging.info(f"✓ 套用動態壓縮，增益調整: {-(current_dBFS - target_dBFS - gain_reduction):.1f}dB")
 
-            # 5. 最終音量調整 - 確保適合 Whisper API
+            # 5. 最終音量調整 - 確保適合轉錄 API
             final_dBFS = audio.dBFS
             if final_dBFS < target_dBFS - 5:  # 音量過小
                 gain_needed = target_dBFS - final_dBFS
@@ -191,12 +228,13 @@ class AudioProcessor:
             logging.warning("⚠ 音檔過濾失敗，使用原始音檔繼續處理")
             return audio
 
-    def split_audio(self, file_path, max_size_mb=20, **filter_params):
+    def split_audio(self, file_path, max_size_mb=20, max_duration_min=10, **filter_params):
         """將音檔分割成小於指定大小的片段並導出為 .mp3 格式
 
         Args:
             file_path: 音檔路徑
             max_size_mb: 最大分割大小 (MB)，預設 20MB
+            max_duration_min: 最大分割長度（分鐘），避免長片段超過模型輸出上限
             **filter_params: 音檔過濾參數（可選）
         """
         try:
@@ -204,20 +242,49 @@ class AudioProcessor:
                 logging.error(f"檔案 {file_path} 不存在")
                 return []
 
-            audio = AudioSegment.from_file(file_path)
-            # 套用音檔過濾，使用提供的參數或預設值
-            audio = self.filter_audio(audio, **filter_params)
+            audio = AudioSegment.from_file(file_path).set_channels(1).set_frame_rate(16000)
 
-            file_size = os.path.getsize(file_path)
-            chunk_length_ms = len(audio) * max_size_mb * 1024 * 1024 // file_size
+            if len(audio) <= 0:
+                logging.error(f"音檔 {file_path} 長度為 0，無法分割")
+                return []
+
+            max_bytes = max_size_mb * 1024 * 1024
+            export_bitrate = "96k"
+            ffmpeg_parameters = self._build_export_filter_params(filter_params, audio.dBFS)
+            bytes_per_ms = 96000 / 8 / 1000
+            size_limited_ms = int(max_bytes * 0.90 / bytes_per_ms)
+            duration_limited_ms = int(max_duration_min * 60 * 1000) if max_duration_min else size_limited_ms
+            chunk_length_ms = max(1000, min(size_limited_ms, duration_limited_ms))
             chunks = [audio[i:i + chunk_length_ms] for i in range(0, len(audio), chunk_length_ms)]
+            logging.info(
+                f"音檔將分割為 {len(chunks)} 段，每段上限約 {chunk_length_ms / 60000:.1f} 分鐘、{max_size_mb}MB"
+            )
             
             chunk_files = []
+            temp_dir = tempfile.mkdtemp(prefix="m4a_transcriber_")
             for i, chunk in enumerate(chunks):
                 try:
-                    chunk_file = f"{os.path.splitext(file_path)[0]}_chunk{i}.mp3"
-                    chunk.export(chunk_file, format="mp3")
-                    chunk_files.append(chunk_file)
+                    chunk_file = os.path.join(temp_dir, f"{os.path.splitext(os.path.basename(file_path))[0]}_chunk{i}.mp3")
+                    chunk.export(chunk_file, format="mp3", bitrate=export_bitrate, parameters=ffmpeg_parameters)
+
+                    if os.path.getsize(chunk_file) > max_bytes:
+                        exported_size = os.path.getsize(chunk_file)
+                        logging.warning(
+                            f"片段 {i + 1} 匯出後仍超過 {max_size_mb}MB，改用更短片段重新切割"
+                        )
+                        os.remove(chunk_file)
+                        sub_chunk_count = max(2, math.ceil(exported_size / max_bytes))
+                        sub_length_ms = max(1000, len(chunk) // sub_chunk_count)
+                        for j, sub_chunk_start in enumerate(range(0, len(chunk), sub_length_ms)):
+                            sub_chunk = chunk[sub_chunk_start:sub_chunk_start + sub_length_ms]
+                            sub_chunk_file = os.path.join(
+                                temp_dir,
+                                f"{os.path.splitext(os.path.basename(file_path))[0]}_chunk{i}_{j}.mp3"
+                            )
+                            sub_chunk.export(sub_chunk_file, format="mp3", bitrate=export_bitrate, parameters=ffmpeg_parameters)
+                            chunk_files.append(sub_chunk_file)
+                    else:
+                        chunk_files.append(chunk_file)
                 except Exception as e:
                     logging.error(f"分割音檔時發生錯誤: {e}\n{traceback.format_exc()}")
 
@@ -226,35 +293,71 @@ class AudioProcessor:
             logging.error(f"處理音檔 {file_path} 時發生錯誤: {e}\n{traceback.format_exc()}")
             return []
 
-    def transcribe_audio(self, file_path, prompt=""):
+    def _build_export_filter_params(self, filter_params, source_dBFS=None):
+        """建立 FFmpeg 匯出濾鏡，避免用 pydub 在 Python 中處理長音檔。"""
+        filters = []
+        high_pass_freq = filter_params.get("high_pass_freq", 80)
+        low_pass_freq = filter_params.get("low_pass_freq", 8000)
+        target_dBFS = filter_params.get("target_dBFS", -20.0)
+        compression_ratio = filter_params.get("compression_ratio", 3.0)
+        voice_boost = filter_params.get("voice_boost", True)
+
+        if high_pass_freq and high_pass_freq > 0:
+            filters.append(f"highpass=f={int(high_pass_freq)}")
+        if low_pass_freq and low_pass_freq > 0:
+            filters.append(f"lowpass=f={int(low_pass_freq)}")
+        if voice_boost:
+            filters.append("equalizer=f=1700:t=q:w=1:g=2")
+        if compression_ratio and compression_ratio > 1.0:
+            filters.append(f"acompressor=ratio={float(compression_ratio):.2f}:threshold=-18dB:attack=20:release=250")
+        if target_dBFS is not None and source_dBFS not in (None, float("-inf")):
+            gain_needed = float(target_dBFS) - float(source_dBFS)
+            if abs(gain_needed) > 1:
+                gain_needed = max(min(gain_needed, 12), -12)
+                filters.append(f"volume={gain_needed:.1f}dB")
+
+        if not filters:
+            return ["-ac", "1", "-ar", "16000"]
+
+        logging.info(f"使用 FFmpeg 音訊濾鏡匯出片段: {','.join(filters)}")
+        return ["-ac", "1", "-ar", "16000", "-af", ",".join(filters)]
+
+    def transcribe_audio(self, file_path, prompt="", model=DEFAULT_TRANSCRIPTION_MODEL,
+                         language=DEFAULT_TRANSCRIPTION_LANGUAGE):
         """轉錄音檔"""
         try:
             with open(file_path, 'rb') as audio_file:
-                # 構建轉錄參數
                 transcription_params = {
-                    "model": "whisper-1",
+                    "model": model,
                     "file": audio_file,
-                    "response_format": "text"
+                    "response_format": "json"
                 }
-                
-                # 如果有提供 prompt 則加入參數
-                if prompt.strip():
+
+                # gpt-4o-transcribe 系列的 prompt 會被當成前文直接輸出，不傳入
+                gpt_transcribe_models = ("gpt-4o-transcribe", "gpt-4o-mini-transcribe")
+                if prompt.strip() and model not in gpt_transcribe_models:
                     transcription_params["prompt"] = prompt
-                
+                if language and language.strip():
+                    transcription_params["language"] = language.strip()
+
                 transcription = self.client.audio.transcriptions.create(**transcription_params)
-            return transcription.strip()
+            if isinstance(transcription, str):
+                return transcription.strip()
+            if isinstance(transcription, dict):
+                return transcription.get("text", "").strip()
+            return getattr(transcription, "text", "").strip()
         except Exception as e:
             logging.error(f"轉錄音檔 {file_path} 時發生錯誤: {e}\n{traceback.format_exc()}")
             return ""
 
-    def translate_to_chinese_with_gpt(self, english_text, system_prompt=None, whisper_prompt=None, model="gpt-5"):
+    def translate_to_chinese_with_gpt(self, english_text, system_prompt=None, whisper_prompt=None, model=DEFAULT_TRANSLATION_MODEL):
         """使用 GPT 模型翻譯成繁體中文
 
         Args:
             english_text: 待翻譯的文本
             system_prompt: 自訂系統提示詞（可選）
-            whisper_prompt: Whisper 提示詞，用於專有名詞（可選）
-            model: GPT 模型名稱，預設為 gpt-5
+            whisper_prompt: 轉錄提示詞，用於專有名詞（可選）
+            model: GPT 模型名稱，預設為 gpt-5.4-mini
 
         Note:
             - GPT-5 使用 "developer" role
@@ -262,42 +365,19 @@ class AudioProcessor:
             - 兩者不可混用
         """
         try:
-            # 預設 system_prompt
-            default_system_prompt = (
-                """
-            你是一個專業的文本校正和翻譯專家，專門處理whisper語音轉文字後的內容，將文本翻譯成繁體中文（臺灣），並進行校正和分段。
-
-            # 任務要求
-
-            1. **翻譯**: 將文本翻譯為繁體中文（臺灣）
-            2. **校正**: 修正語音轉文字可能產生的錯誤，根據上下文進行合理修正
-            3. **去重**: 刪除重複的語句和推廣用語
-            4. **分段**: 將長文本按照邏輯主題進行分段，每段之間用空行分隔
-            5. **整理**: 確保文本結構清晰，易於閱讀
-
-            # 分段原則
-
-            - 每段長度適中（約100-200字）
-            - 段落之間用空行分隔
-
-            # 輸出格式
-
-            直接輸出分段後的繁體中文文本，段落間用空行分隔。不需要其他說明。
-                """
-            )
-
-            # 使用提供的 system_prompt 或預設值
             if system_prompt is None:
-                system_prompt = default_system_prompt
+                system_prompt = DEFAULT_GPT_SYSTEM_PROMPT
 
             # 如果有 whisper_prompt，加入到系統提示詞中
             if whisper_prompt and whisper_prompt.strip():
                 system_prompt += f"""
 
-            # 音檔相關關鍵字與專有名詞
+            # 音檔關鍵字與專有名詞（強制校正）
 
-            以下是使用者提供的音檔相關關鍵字與專有名詞，請在翻譯時特別注意這些詞彙的正確性：
-            {whisper_prompt.strip()}
+以下是此音檔的正確關鍵字與專有名詞：
+{whisper_prompt.strip()}
+
+**重要**：語音轉文字模型常因發音相似而誤轉這些詞彙（例如將英文 "host" 轉成「POST」、「霍斯特」等）。請主動掃描全文，將所有讀音相近的錯誤還原為上方列出的正確字詞。
                 """
 
             # 根據模型選擇正確的 role
@@ -323,7 +403,7 @@ class AudioProcessor:
             # 如果是模型錯誤，提供更有幫助的錯誤訊息
             if "model" in str(e).lower():
                 logging.error(f"模型 '{model}' 可能不可用，請檢查您的 OpenAI 帳戶權限")
-                logging.error(f"建議使用的模型: gpt-5 (推薦), gpt-4o, gpt-4o-mini, gpt-4.1")
+                logging.error(f"建議使用的模型: {DEFAULT_TRANSLATION_MODEL}, gpt-4o, gpt-4o-mini, gpt-4.1")
             return ""
 
     def filter_noise_text(self, text):
@@ -410,30 +490,81 @@ class AudioProcessor:
             logging.info(f"已過濾 {len(removed_patterns)} 個噪聲模式")
             logging.debug(f"移除的內容: {removed_patterns[:5]}...")  # 只顯示前5個
         
+        # 段落級別重複偵測：移除 gpt-4o-transcribe 在 chunk 邊界產生的幻覺重複
+        cleaned_text = self._remove_duplicate_paragraphs(cleaned_text)
+
         final_length = len(cleaned_text)
         if final_length != len(text):
             logging.info(f"文本過濾完成：{len(text)} → {final_length} 字符")
-        
+
         return cleaned_text
 
-    def process_files(self, file_paths, output_file, whisper_prompt="", gpt_system_prompt=None, **audio_filter_params):
+    def _remove_duplicate_paragraphs(self, text, similarity_threshold=0.82):
+        """移除高度相似的重複段落（處理 gpt-4o-transcribe chunk 邊界幻覺重複）"""
+        import difflib
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        if len(paragraphs) <= 1:
+            return text
+
+        result = [paragraphs[0]]
+        for para in paragraphs[1:]:
+            is_duplicate = any(
+                difflib.SequenceMatcher(None, para, prev).ratio() >= similarity_threshold
+                for prev in result
+            )
+            if is_duplicate:
+                logging.info(f"移除重複段落：{para[:40]}…")
+            else:
+                result.append(para)
+
+        return '\n\n'.join(result)
+
+    def process_files(self, file_paths, output_file, whisper_prompt="", gpt_system_prompt=None,
+                      transcription_model=DEFAULT_TRANSCRIPTION_MODEL,
+                      translation_model=DEFAULT_TRANSLATION_MODEL,
+                      transcription_language=DEFAULT_TRANSCRIPTION_LANGUAGE,
+                      max_size_mb=20,
+                      max_duration_min=10,
+                      overwrite=True,
+                      should_stop=None,
+                      **audio_filter_params):
         """並行處理所有音檔，並按照正確順序保存轉錄結果
 
         Args:
             file_paths: 音檔路徑列表
             output_file: 輸出檔案路徑
-            whisper_prompt: Whisper 提示詞
+            whisper_prompt: 轉錄提示詞
             gpt_system_prompt: GPT 系統提示詞
+            transcription_model: OpenAI 語音轉文字模型
+            translation_model: GPT 翻譯潤飾模型
+            transcription_language: 轉錄語言 ISO-639-1 代碼，空值代表自動偵測
+            max_size_mb: 單一片段最大檔案大小
+            max_duration_min: 單一片段最大分鐘數
+            overwrite: 是否覆寫輸出檔，避免重跑時附加舊內容
+            should_stop: 可選的停止檢查函式，回傳 True 時停止處理
             **audio_filter_params: 音檔過濾參數（可選）
         """
         total_files = len(file_paths)
         logging.info(f"開始處理 {total_files} 個音檔")
+        os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
+        if overwrite:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write("")
 
         for file_index, file_path in enumerate(file_paths, 1):
+            if should_stop and should_stop():
+                logging.warning("收到停止要求，結束尚未開始的檔案處理")
+                break
+
             logging.info(f"正在處理第 {file_index}/{total_files} 個檔案: {os.path.basename(file_path)}")
 
             # 傳遞音檔過濾參數
-            chunk_files = self.split_audio(file_path, **audio_filter_params)
+            chunk_files = self.split_audio(
+                file_path,
+                max_size_mb=max_size_mb,
+                max_duration_min=max_duration_min,
+                **audio_filter_params
+            )
             if not chunk_files:
                 logging.warning(f"無法分割音檔: {file_path}")
                 continue
@@ -443,54 +574,67 @@ class AudioProcessor:
             total_chunks = len(chunk_files)
             logging.info(f"檔案已分割為 {total_chunks} 個片段，開始並行處理")
             
-            def process_chunk(index, chunk_file):
+            def transcribe_chunk(index, chunk_file):
                 try:
-                    logging.info(f"開始處理片段 {index + 1}/{total_chunks}: {os.path.basename(chunk_file)}")
-                    
-                    # 轉錄音檔（帶入自訂 prompt）
-                    raw_transcription = self.transcribe_audio(chunk_file, whisper_prompt)
+                    if should_stop and should_stop():
+                        logging.warning(f"片段 {index + 1} 尚未開始即停止")
+                        return
+                    logging.info(f"開始轉錄片段 {index + 1}/{total_chunks}: {os.path.basename(chunk_file)}")
+                    raw_transcription = self.transcribe_audio(
+                        chunk_file,
+                        whisper_prompt,
+                        transcription_model,
+                        transcription_language
+                    )
                     if not raw_transcription:
                         logging.warning(f"片段 {index + 1} 轉錄結果為空")
                         return
-                    
-                    logging.info(f"片段 {index + 1} 轉錄完成，開始翻譯潤飾")
-                    
-                    # 翻譯（帶入自訂 system_prompt 和 whisper_prompt）
-                    translated_text = self.translate_to_chinese_with_gpt(raw_transcription, gpt_system_prompt, whisper_prompt)
-                    
-                    # 過濾噪聲文本
-                    translated_text = self.filter_noise_text(translated_text)
-                    
-                    # 儲存結果到對應索引位置
-                    chunk_results[index] = translated_text
-                    
-                    logging.info(f"片段 {index + 1} 處理完成")
-                    
+                    chunk_results[index] = raw_transcription
+                    logging.info(f"片段 {index + 1} 轉錄完成")
                 except Exception as e:
-                    logging.error(f"處理分割檔案 {chunk_file} 時發生錯誤: {e}\n{traceback.format_exc()}")
-            
+                    logging.error(f"轉錄片段 {chunk_file} 時發生錯誤: {e}\n{traceback.format_exc()}")
+
             # 使用 try-finally 確保清理
             try:
-                # 並行處理音檔片段（max_workers=3 提升處理速度）
+                # 階段 1：並行轉錄所有片段
                 with ThreadPoolExecutor(max_workers=3) as executor:
-                    futures = [executor.submit(process_chunk, i, chunk_file) for i, chunk_file in enumerate(chunk_files)]
-                    
-                    # 等待所有處理完成
+                    futures = [executor.submit(transcribe_chunk, i, chunk_file) for i, chunk_file in enumerate(chunk_files)]
                     completed = 0
-                    for future in futures:
+                    for future in as_completed(futures):
                         future.result()
                         completed += 1
-                        logging.info(f"已完成 {completed}/{total_chunks} 個片段的處理")
-                
-                # 按照順序寫入檔案
-                successful_chunks = sum(1 for result in chunk_results if result)
-                logging.info(f"開始寫入轉錄結果，共 {successful_chunks} 個有效片段")
-                
-                with open(output_file, 'a+', encoding='utf-8') as f:
-                    for i, result in enumerate(chunk_results):
-                        if result:
-                            f.write(result + "\n")
-                            logging.debug(f"已寫入片段 {i + 1} 的結果")
+                        logging.info(f"已完成轉錄 {completed}/{total_chunks} 個片段")
+                        if should_stop and should_stop():
+                            logging.warning("收到停止要求，等待已送出的片段收尾後停止")
+
+                if should_stop and should_stop():
+                    return
+
+                # 階段 2：合併所有原始轉錄文本，整體翻譯（保留完整上下文）
+                valid_transcriptions = [r for r in chunk_results if r]
+                if not valid_transcriptions:
+                    logging.warning("所有片段轉錄結果均為空，略過翻譯")
+                    return
+
+                merged_raw = "\n".join(valid_transcriptions)
+                logging.info(f"合併 {len(valid_transcriptions)} 個片段，共 {len(merged_raw)} 字符，開始整體翻譯潤飾")
+                logging.info(f"使用 {translation_model} 進行整體翻譯潤飾")
+
+                translated_text = self.translate_to_chinese_with_gpt(
+                    merged_raw,
+                    gpt_system_prompt,
+                    whisper_prompt,
+                    translation_model
+                )
+
+                translated_text = self.filter_noise_text(translated_text)
+
+                # 寫入最終結果
+                logging.info(f"開始寫入轉錄結果")
+                with open(output_file, 'a', encoding='utf-8') as f:
+                    if translated_text:
+                        f.write(translated_text.strip() + "\n\n")
+                        logging.debug("已寫入整體翻譯結果")
                 
                 logging.info(f"檔案 {os.path.basename(file_path)} 處理完成")
                 
@@ -515,36 +659,68 @@ class AudioProcessor:
                 else:
                     logging.info("無需清理臨時檔案")
 
+                if chunk_files:
+                    temp_dir = os.path.dirname(chunk_files[0])
+                    if os.path.basename(temp_dir).startswith("m4a_transcriber_"):
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+SUPPORTED_AUDIO_EXTENSIONS = {'.m4a', '.mp3', '.wav', '.flac', '.aac'}
+
 
 def main():
-    """主程式入口"""
+    """主程式入口
+
+    用法：
+      python app.py                        # 掃描 AUDIO_DIR 所有音檔
+      python app.py a.m4a b.mp3           # 指定特定檔案
+      AUDIO_DIR=./recordings python app.py
+      TEXT_DIR=./output python app.py
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="音檔批次轉錄工具")
+    parser.add_argument("files", nargs="*", help="指定要處理的音檔路徑（不指定則掃描 AUDIO_DIR）")
+    args = parser.parse_args()
+
+    audio_dir = os.getenv("AUDIO_DIR", "./speech")
+    text_dir = os.getenv("TEXT_DIR", "./text")
+
     try:
-        # 初始化音檔處理器
-        processor = AudioProcessor(audio_dir='./speech', text_dir='./text')
-        
-        # 音檔路徑設定
-        file_paths = [os.path.join(processor.audio_dir, "新錄音 15.m4a")]
-        output_file = os.path.join(processor.text_dir, "新錄音 15.txt")
+        processor = AudioProcessor(audio_dir=audio_dir, text_dir=text_dir)
+        os.makedirs(text_dir, exist_ok=True)
 
-        # 自訂提示詞設定
-        # Whisper 轉錄提示詞（可放入關鍵字或專有名詞協助辨識）
-        whisper_prompt = "這裡放關鍵字, 像這樣, SMTP, SAMP, Unix"  # 預設為空值
-        
-        # GPT 翻譯系統提示詞（None 會使用函數內建的預設值）
-        gpt_system_prompt = None
-        
-        # 若要自訂 GPT 系統提示詞，可取消註解並修改：
-        # gpt_system_prompt = """
-        # 你是一個專業的語音轉錄後處理專家...
-        # """
+        # 決定要處理的檔案清單
+        if args.files:
+            file_paths = [os.path.abspath(f) for f in args.files]
+            missing = [f for f in file_paths if not os.path.exists(f)]
+            if missing:
+                for f in missing:
+                    logging.error(f"找不到檔案: {f}")
+                return
+        else:
+            file_paths = sorted(
+                str(p) for p in Path(audio_dir).iterdir()
+                if p.is_file() and p.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
+            )
+            if not file_paths:
+                logging.warning(f"在 {audio_dir} 中找不到任何音檔")
+                return
+            logging.info(f"找到 {len(file_paths)} 個音檔：{[os.path.basename(f) for f in file_paths]}")
 
-        # 確保輸出資料夾存在
-        os.makedirs(processor.text_dir, exist_ok=True)
+        # 逐一處理，每個輸入對應一個輸出 txt
+        for file_path in file_paths:
+            stem = os.path.splitext(os.path.basename(file_path))[0]
+            output_file = os.path.join(text_dir, f"{stem}.txt")
+            processor.process_files(
+                [file_path],
+                output_file,
+                DEFAULT_KEYWORDS,
+                None,  # 使用 DEFAULT_GPT_SYSTEM_PROMPT
+                transcription_language=DEFAULT_TRANSCRIPTION_LANGUAGE
+            )
+            logging.info(f"✓ 已儲存：{output_file}")
 
-        # 開始處理音檔
-        processor.process_files(file_paths, output_file, whisper_prompt, gpt_system_prompt)
-        logging.info(f"轉錄與翻譯完成，結果已儲存在 {output_file} 中。")
-        
     except ValueError as e:
         logging.error(f"設定錯誤: {e}")
     except Exception as e:
