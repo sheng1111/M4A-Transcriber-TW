@@ -1,39 +1,24 @@
 # M4A Transcriber TW
 
-M4A Transcriber TW 是一個以 OpenAI API 為核心的音檔轉錄與繁體中文整理工具。支援命令列與 Tkinter GUI，可批次處理 M4A、MP3、WAV、FLAC、AAC 等常見音檔，並將轉錄內容翻譯、校正與分段成臺灣繁體中文。
+M4A Transcriber TW 是以 OpenAI API 為核心的音檔轉錄與臺灣繁體中文翻譯工具，提供命令列與 Tkinter 圖形介面。v2.4.0 著重內容忠實度、可續跑、錯誤可見性、低記憶體音訊處理與清楚的結果分類。
 
-目前版本：`2.3.0`
+目前版本：`2.4.0`
 
 ## 主要功能
 
-- 使用 `gpt-4o-transcribe` 作為預設語音轉文字模型
-- 使用 `gpt-5.4-mini` 作為預設翻譯與潤飾模型
-- 支援轉錄模型切換：`gpt-4o-transcribe`、`gpt-4o-mini-transcribe`、`whisper-1`
-- 支援自訂轉錄提示詞，適合加入人名、產品名、術語與專有名詞
-- 支援自訂 GPT 系統提示詞，控制翻譯、校正與分段風格
-- 長音檔自動切段，預設每段最長 10 分鐘並限制檔案大小
-- 使用 FFmpeg 進行高通、低通、語音增強、壓縮與音量調整
-- GUI 提供檔案選擇、進階參數、處理日誌、結果檢視與編輯
+- 預設使用 OpenAI `gpt-transcribe` 進行檔案轉錄。
+- 預設使用 `gpt-5.6-luna` 與 Responses API 翻譯，固定 `reasoning.effort="none"`。
+- 將原始轉錄切成帶 ID 的文字段落，要求模型逐段回傳；缺段、空白實質段落或錯誤 ID 不會寫成最終成品。
+- 保留原始轉錄、各片段結果與處理 manifest，失敗後可從成功步驟繼續。
+- 使用 FFmpeg 直接切割為 16kHz、單聲道、96kbps MP3，不把整個長音檔載入 Python 記憶體。
+- 支援 M4A、MP3、WAV、FLAC、AAC、MP4、MPEG、WebM。
+- 每個來源音檔使用獨立結果資料夾，避免原始資料、翻譯與處理狀態混在一起。
 
-## 處理流程
+OpenAI 官方文件建議一般錄音檔從 `gpt-transcribe` 開始；它支援錄音背景、關鍵字和多語言提示。`gpt-5.6-luna` 支援 Responses API、Structured Outputs 與 `none` reasoning effort。
 
-```mermaid
-flowchart TD
-    A[選擇音檔] --> B[讀取設定]
-    B --> C[FFmpeg 轉換與濾波]
-    C --> D[依大小與時間切段]
-    D --> E[OpenAI Audio Transcriptions API]
-    E --> F[gpt-4o-transcribe 轉錄]
-    F --> G[文字噪聲過濾]
-    G --> H[gpt-5.4-mini 翻譯、校正與分段]
-    H --> I[依片段順序合併]
-    I --> J[輸出 TXT]
-
-    B --> B1[轉錄模型]
-    B --> B2[轉錄語言：預設自動偵測]
-    B --> B3[提示詞與專有名詞]
-    B --> B4[音檔濾波與切段參數]
-```
+- [OpenAI File Transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
+- [GPT Transcribe model](https://developers.openai.com/api/docs/models/gpt-transcribe)
+- [GPT-5.6 Luna model](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
 
 ## 系統需求
 
@@ -41,145 +26,172 @@ flowchart TD
 - FFmpeg 與 FFprobe
 - OpenAI API Key
 
-## 安裝
+安裝 Python 套件：
 
 ```bash
-pip install -r requirements.txt -U
+python -m pip install -r requirements.txt -U
 ```
 
 安裝 FFmpeg：
 
 ```bash
+# macOS
+brew install ffmpeg
+
 # Ubuntu / Debian
 sudo apt update
 sudo apt install ffmpeg
-
-# macOS
-brew install ffmpeg
 ```
 
-Windows 請從 FFmpeg 官方網站下載並加入系統 PATH。
+Windows 請安裝 FFmpeg 並將 `ffmpeg`、`ffprobe` 加入 PATH。
 
 ## API Key
 
-在專案根目錄建立 `.env`：
+複製範本後填入自己的 Key：
 
 ```bash
+cp .env.example .env
+```
+
+```dotenv
 OPENAI_API_KEY=your_openai_api_key_here
 ```
 
-GUI 也可以在「基本設定」頁面輸入並儲存 API Key。
+`.env` 只保留在本機，不會進入 Git。若 Key 曾經提交到 Git 歷史，停止追蹤並不能撤銷該 Key，請到 OpenAI 平台撤銷舊 Key 並建立新 Key。
 
-## 使用方式
-
-### GUI
+## 圖形介面
 
 ```bash
 python gui_app.py
 ```
 
-GUI 頁面包含：
+新版工作台包含：
 
-- 基本設定：API Key、輸入音檔、輸出資料夾、音檔處理參數
-- 進階設定：轉錄模型、翻譯模型、轉錄語言、提示詞。轉錄語言預設留空，代表自動偵測；需要固定語言時可填 `zh`、`en`、`ja` 等 ISO-639-1 代碼。
-- 結果檢視：讀取、編輯、儲存、複製與匯出結果
-- 處理日誌：查看處理進度與錯誤訊息
+- 左側工作佇列：加入檔案、加入資料夾、移除與清除。
+- 右側設定：API Key、輸出路徑、模型、語言、術語、背景與效能參數。
+- 結果預覽：依音檔瀏覽 `final.txt`，並可開啟完整結果資料夾。
+- 活動記錄與固定進度列：明確顯示轉錄、翻譯、快取、失敗與停止狀態。
 
-### 命令列
+忠實翻譯核心提示詞受保護。GUI 只能追加錄音背景、正確術語和格式偏好，不能取消逐段完整輸出或改成摘要。
+
+## 命令列
+
+直接帶入一個或多個檔案，不必修改 `app.py`：
 
 ```bash
-python app.py
+python app.py speech/meeting.m4a speech/interview.mp3
 ```
 
-預設測試檔案為：
+處理整個資料夾：
+
+```bash
+python app.py ./recordings --output-dir ./text
+```
+
+加入語言、術語與錄音背景：
+
+```bash
+python app.py speech/meeting.m4a \
+  --language zh \
+  --language en \
+  --keyword OpenAI \
+  --keyword "Responses API" \
+  --context "中英文混合的技術會議"
+```
+
+查看所有選項：
+
+```bash
+python app.py --help
+```
+
+未指定輸入時會遞迴掃描 `speech/`。預設輸出根目錄為 `text/`。
+
+## 結果結構
+
+每個音檔使用獨立資料夾：
 
 ```text
-speech/新錄音 5.m4a
+text/
+└── meeting/
+    ├── final.txt
+    ├── raw.txt
+    ├── manifest.json
+    └── chunks/
+        ├── a0000.raw.txt
+        ├── a0001.raw.txt
+        ├── s00001.zh-TW.txt
+        └── s00002.zh-TW.txt
 ```
 
-輸出檔案為：
+- `raw.txt`：依音訊片段順序合併的原始轉錄。
+- `final.txt`：通過段落完整性驗證的臺灣繁體中文成品。
+- `manifest.json`：來源雜湊、設定雜湊、模型、狀態與錯誤。
+- `chunks/`：可續跑的音訊片段原始文字與翻譯文字。
 
-```text
-text/新錄音 5.txt
+如果不同來源具有相同檔名，第二個來源會自動加入來源雜湊後綴，避免覆寫。
+
+## 可續跑與失敗行為
+
+- 來源 SHA-256 與 ASR 設定相同時，可以重用原始轉錄。
+- 只有翻譯設定改變時，會保留原始轉錄並重做翻譯。
+- 逾時、HTTP 429 與伺服器錯誤最多重試三次；認證和參數錯誤立即失敗。
+- 最終成品以原子替換寫入。失敗、取消或空白輸出不會覆蓋先前成功的 `final.txt`。
+- 暫存音訊無論成功或失敗都會清除。
+
+## 模型與提示參數
+
+預設模型：
+
+| 用途 | 預設值 |
+| --- | --- |
+| 語音轉錄 | `gpt-transcribe` |
+| 繁中翻譯 | `gpt-5.6-luna` |
+| Reasoning effort | `none` |
+| Text verbosity | `high` |
+
+可選轉錄模型：
+
+- `gpt-transcribe`
+- `gpt-4o-transcribe`
+- `gpt-4o-mini-transcribe`
+- `whisper-1`
+
+可選翻譯模型：
+
+- `gpt-5.6-luna`
+- `gpt-5.6-terra`
+- `gpt-5.6-sol`
+
+對 `gpt-transcribe`，程式使用 `prompt`、`keywords`、`languages`。其他轉錄模型會依能力改用單一 `language` 與提示文字。
+
+## 開發與驗證
+
+語法檢查：
+
+```bash
+python -m py_compile app.py gui_app.py
 ```
 
-如需調整命令列處理檔案，請修改 `app.py` 的 `main()`。
+測試：
 
-## 重要設定
-
-| 設定 | 預設值 | 說明 |
-| --- | --- | --- |
-| 轉錄模型 | `gpt-4o-transcribe` | OpenAI 語音轉文字模型 |
-| 翻譯模型 | `gpt-5.4-mini` | 用於繁體中文翻譯、校正與分段 |
-| 轉錄語言 | 空白 | 預設自動偵測；可指定 ISO-639-1 代碼 |
-| 分割大小 | `20MB` | 單一暫存音檔大小上限 |
-| 最長片段 | `10` 分鐘 | 避免單段過長造成輸出截斷 |
-| 匯出格式 | MP3 96kbps / mono / 16kHz | 平衡準確性、效能與 API 檔案大小 |
-| 高通濾波 | `80Hz` | 減少低頻噪音 |
-| 低通濾波 | `8000Hz` | 保留語音主要頻段 |
-
-## OpenAI 轉錄模型
-
-本專案使用 OpenAI Audio Transcriptions API：
-
-```python
-from openai import OpenAI
-
-client = OpenAI()
-
-with open("speech/example.m4a", "rb") as audio_file:
-    transcript = client.audio.transcriptions.create(
-        model="gpt-4o-transcribe",
-        file=audio_file,
-        response_format="json",
-        prompt="Unix, 神通, host"
-    )
+```bash
+pytest -q
 ```
 
-若要指定語言，可另外加入 `language="zh"`。未指定時由模型自動偵測。
+測試使用模擬 OpenAI 回應，不會產生付費 API 呼叫。
 
-`gpt-4o-transcribe` 與 `gpt-4o-mini-transcribe` 相較 Whisper 模型有更好的語言辨識與字錯率表現；本專案仍保留 `whisper-1` 作為可選回退模型。
+## v2.4.0 更新內容
 
-## 目錄結構
+- CLI 改為直接接收檔案與資料夾，移除硬編碼檔名與個人提示詞。
+- ASR 預設升級為 `gpt-transcribe`。
+- 翻譯升級為 `gpt-5.6-luna`、Responses API、Structured Outputs 與 none reasoning。
+- 新增逐段完整性契約，避免模型偷偷摘要或省略內容。
+- 新增每檔結果分類、來源與設定雜湊、部分續跑及原子寫入。
+- 重做 GUI 工作台與執行緒事件傳遞。
+- 將音訊切割移至 FFmpeg 子程序，降低記憶體使用量。
+- `.env` 停止 Git 追蹤並加入安全範本。
 
-```text
-M4A-Transcriber-TW/
-├── app.py
-├── gui_app.py
-├── requirements.txt
-├── readme.md
-├── speech/
-│   └── 新錄音 5.m4a
-└── text/
-    └── 新錄音 5.txt
-```
+## License
 
-## 版本紀錄
-
-### 2.3.0
-
-- 預設轉錄模型改為 `gpt-4o-transcribe`
-- 預設翻譯模型改為 `gpt-5.4-mini`
-- 新增最長片段分鐘數，降低長音檔轉錄截斷風險
-- 將暫存音檔改為 16kHz mono、96kbps MP3
-- 改善 GUI 背景執行緒的狀態讀取方式
-- 轉錄語言預設改為自動偵測，可由 GUI 或 CLI 指定
-- 精簡 README 並更新使用說明
-
-### 2.2
-
-- 加入跨平台 FFmpeg 偵測
-- 強化 GUI 設定、日誌與結果檢視
-- 支援進階音檔濾波參數
-
-### 2.1
-
-- 整合 API Key 設定與基本 GUI 控制
-- 加入批次處理與結果管理
-
-## 注意事項
-
-- 長音檔會被切成多段並平行處理，會產生多次 OpenAI API 呼叫。
-- `gpt-4o-transcribe` 與 `gpt-4o-mini-transcribe` 使用 `json` 回應格式，程式會讀取其中的 `text` 欄位。
-- 如果轉錄內容包含大量專有名詞，請在轉錄提示詞中明確列出。
-- 轉錄語言預設自動偵測；如果音檔語言固定，指定 ISO-639-1 代碼通常可提升準確性與延遲表現。
+本專案採用 MIT License，詳見 [LICENSE](LICENSE)。

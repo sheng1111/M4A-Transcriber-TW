@@ -1,5 +1,14 @@
 .env
 .venv/
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+
+# 使用者音檔與處理結果不進入版本控制
+speech/*
+text/*
 
 # 忽略 speech/OLD 和 text/OLD 資料夾內的所有檔案
 speech/OLD/*
