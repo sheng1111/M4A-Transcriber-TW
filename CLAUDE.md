@@ -2,7 +2,7 @@
 
 ## Project
 
-M4A Transcriber TW v2.4.0 converts recorded audio into a raw transcript and a faithful Taiwan Traditional Chinese result. `app.py` and `gui_app.py` are entry points; reusable code lives in `transcriber/`.
+VoiceScribe v2.4.0 converts recorded audio into a raw transcript and a faithful Taiwan Traditional Chinese result. `app.py` and `gui_app.py` are entry points; reusable code lives in `transcriber/`.
 
 ## Architecture
 

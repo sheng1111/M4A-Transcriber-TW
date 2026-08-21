@@ -121,7 +121,7 @@ class FFmpegAudioChunker:
         max_bytes = config.max_size_mb * 1024 * 1024
         size_seconds = int((max_bytes * 8 * 0.88) / (config.bitrate_kbps * 1000))
         segment_seconds = max(30, min(config.max_duration_min * 60, size_seconds))
-        directory = Path(tempfile.mkdtemp(prefix="m4a_transcriber_"))
+        directory = Path(tempfile.mkdtemp(prefix="voicescribe_"))
         try:
             self._segment(source, directory / "chunk_%04d.mp3", segment_seconds, config)
             files = sorted(directory.glob("chunk_*.mp3"))

@@ -1,4 +1,4 @@
-"""M4A Transcriber TW core package."""
+"""VoiceScribe core package."""
 
 from .config import APP_VERSION, ProcessingConfig
 from .pipeline import AudioProcessor, ProcessingResult, TranscriptionPipeline

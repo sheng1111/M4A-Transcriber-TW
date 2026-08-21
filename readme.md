@@ -1,6 +1,6 @@
-# M4A Transcriber TW
+# VoiceScribe
 
-M4A Transcriber TW 是以 OpenAI API 為核心的音檔轉錄與臺灣繁體中文翻譯工具，提供命令列與 Tkinter 圖形介面。v2.4.0 著重內容忠實度、可續跑、錯誤可見性、低記憶體音訊處理與清楚的結果分類。
+VoiceScribe 是以 OpenAI API 為核心的音檔轉錄與臺灣繁體中文翻譯工具，提供命令列與 Tkinter 圖形介面。v2.4.0 著重內容忠實度、可續跑、錯誤可見性、低記憶體音訊處理與清楚的結果分類。
 
 目前版本：`2.4.0`
 

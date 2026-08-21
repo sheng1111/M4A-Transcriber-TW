@@ -1,4 +1,4 @@
-"""Command-line entry point for M4A Transcriber TW."""
+"""Command-line entry point for VoiceScribe."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from transcriber.config import (
 from transcriber.pipeline import ProcessingCancelled, TranscriptionPipeline
 
 
-LOGGER = logging.getLogger("m4a_transcriber")
+LOGGER = logging.getLogger("voicescribe")
 
 __all__ = ["AudioProcessor", "build_parser", "discover_inputs", "main"]
 

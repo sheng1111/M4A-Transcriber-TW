@@ -1,4 +1,4 @@
-"""Tkinter workspace for M4A Transcriber TW."""
+"""Tkinter workspace for VoiceScribe."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from transcriber.config import (
 from transcriber.pipeline import ProcessingCancelled, TranscriptionPipeline
 
 
-LOGGER = logging.getLogger("m4a_transcriber.gui")
+LOGGER = logging.getLogger("voicescribe.gui")
 
 
 class TranscriptionApp:
@@ -61,7 +61,7 @@ class TranscriptionApp:
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
     def _configure_window(self) -> None:
-        self.root.title(f"M4A Transcriber TW {APP_VERSION}")
+        self.root.title(f"VoiceScribe {APP_VERSION}")
         self.root.geometry("1180x800")
         self.root.minsize(980, 680)
         self.root.configure(bg=self.COLORS["background"])
@@ -494,7 +494,7 @@ class TranscriptionApp:
     def show_about(self) -> None:
         messagebox.showinfo(
             "關於",
-            f"M4A Transcriber TW\n版本 {APP_VERSION}\n\n"
+            f"VoiceScribe\n版本 {APP_VERSION}\n\n"
             "預設轉錄模型: gpt-transcribe\n"
             "預設翻譯模型: gpt-5.6-luna\n"
             "推理強度: none\n\n"
