@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Iterable, Tuple
 
 
-APP_VERSION = "2.4.2"
+APP_VERSION = "2.4.3"
 DEFAULT_TRANSCRIPTION_MODEL = "gpt-transcribe"
 DEFAULT_TRANSLATION_MODEL = "gpt-5.6-luna"
 DEFAULT_TARGET_LANGUAGE = "zh-TW"
@@ -80,6 +80,7 @@ class ProcessingConfig:
     keywords: Tuple[str, ...] = field(default_factory=tuple)
     recording_context: str = ""
     style_preference: str = ""
+    transcript_only: bool = False
     asr_workers: int = 3
     translation_workers: int = 2
     retry_attempts: int = 3
@@ -126,6 +127,7 @@ class ProcessingConfig:
                 "keywords": self.keywords,
                 "context": self.recording_context,
                 "style": self.style_preference,
+                "transcript_only": self.transcript_only,
                 "reasoning_effort": "none",
                 "verbosity": "high",
                 "raw_sha256": raw_sha256,

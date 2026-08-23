@@ -1,54 +1,53 @@
 # VoiceScribe
 
-VoiceScribe 是以 OpenAI API 為核心的多語言音檔轉錄與翻譯工具，提供命令列與 Tkinter 圖形介面。預設輸出臺灣繁體中文，也可由使用者指定其他目標語言。
+[English](readme.md) | [繁體中文](README.zh-TW.md)
 
-目前版本：`2.4.2`
+VoiceScribe is a multilingual audio transcription and faithful translation tool built on the OpenAI API. It provides both a command-line interface and a Tkinter desktop GUI. Translation defaults to Traditional Chinese for Taiwan (`zh-TW`), while any valid BCP 47 target language tag can be supplied by the user.
 
-## 主要功能
+Current version: `2.4.3`
 
-- 預設使用 OpenAI `gpt-transcribe` 進行檔案轉錄。
-- 預設使用 `gpt-5.6-luna` 與 Responses API 翻譯，固定 `reasoning.effort="none"`。
-- 翻譯預設輸出 `zh-TW`，CLI 與 GUI 均可指定其他 BCP 47 目標語言代碼。
-- 將原始轉錄切成帶 ID 的文字段落，要求模型逐段回傳；缺段、空白實質段落或錯誤 ID 不會寫成最終成品。
-- 保留原始轉錄、各片段結果與處理 manifest，失敗後可從成功步驟繼續。
-- 使用 FFmpeg 直接切割為 16kHz、單聲道、96kbps MP3，不把整個長音檔載入 Python 記憶體。
-- 支援 M4A、MP3、WAV、FLAC、AAC、MP4、MPEG、WebM。
-- 每個來源音檔使用獨立結果資料夾，避免原始資料、翻譯與處理狀態混在一起。
+## Highlights
 
-OpenAI 官方文件建議一般錄音檔從 `gpt-transcribe` 開始；它支援錄音背景、關鍵字和多語言提示。`gpt-5.6-luna` 支援 Responses API、Structured Outputs 與 `none` reasoning effort。
+- Transcribes audio with OpenAI `gpt-transcribe` by default.
+- Translates with `gpt-5.6-luna` and the Responses API, using `reasoning.effort="none"`.
+- Supports configurable translation targets such as `zh-TW`, `en`, `ja`, `ko`, and `pt-BR`.
+- Provides a transcript-only mode that skips translation and its associated API cost.
+- Enforces a segment-level output contract so missing IDs, omitted content, and invalid responses never become the final result.
+- Resumes completed transcription and translation work when source files and settings have not changed.
+- Processes long recordings through low-memory FFmpeg segmentation instead of loading the entire file into Python memory.
+- Supports M4A, MP3, WAV, FLAC, AAC, MP4, MPEG, and WebM.
+- Stores every source file in a separate output directory with raw text, final text, cached segments, and a processing manifest.
 
-- [OpenAI File Transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
-- [GPT Transcribe model](https://developers.openai.com/api/docs/models/gpt-transcribe)
-- [GPT-5.6 Luna model](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
+## Requirements
 
-## 系統需求
+- Python 3.10 or newer
+- FFmpeg and FFprobe on `PATH`
+- An OpenAI API key
 
-- Python 3.8 或更新版本
-- FFmpeg 與 FFprobe
-- OpenAI API Key
-
-安裝 Python 套件：
+Install the Python dependencies:
 
 ```bash
 python -m pip install -r requirements.txt -U
 ```
 
-安裝 FFmpeg：
+Install FFmpeg on macOS:
 
 ```bash
-# macOS
 brew install ffmpeg
+```
 
-# Ubuntu / Debian
+Install FFmpeg on Ubuntu or Debian:
+
+```bash
 sudo apt update
 sudo apt install ffmpeg
 ```
 
-Windows 請安裝 FFmpeg 並將 `ffmpeg`、`ffprobe` 加入 PATH。
+On Windows, install FFmpeg and add both `ffmpeg` and `ffprobe` to `PATH`.
 
-## API Key
+## API key
 
-複製範本後填入自己的 Key：
+Copy the environment template and add your key:
 
 ```bash
 cp .env.example .env
@@ -58,38 +57,45 @@ cp .env.example .env
 OPENAI_API_KEY=your_openai_api_key_here
 ```
 
-`.env` 只保留在本機，不會進入 Git。若 Key 曾經提交到 Git 歷史，停止追蹤並不能撤銷該 Key，請到 OpenAI 平台撤銷舊 Key 並建立新 Key。
+The `.env` file stays local and is ignored by Git. If a key has ever been committed, revoke it on the OpenAI platform and create a replacement.
 
-## 圖形介面
+## Desktop GUI
 
 ```bash
 python gui_app.py
 ```
 
-新版工作台包含：
+The workspace includes:
 
-- 左側工作佇列：加入檔案、加入資料夾、移除與清除。
-- 右側設定：API Key、輸出路徑、模型、語言、術語、背景與效能參數。
-- 結果預覽：依音檔瀏覽 `final.txt`，並可開啟完整結果資料夾。
-- 活動記錄與固定進度列：明確顯示轉錄、翻譯、快取、失敗與停止狀態。
+- A batch queue for individual files or recursively discovered folders.
+- API key, output directory, model, language, terminology, context, and performance settings.
+- An editable target-language selector with common BCP 47 language tags.
+- A **Transcript only** option that bypasses translation.
+- A final-result preview, activity log, progress indicator, cancellation, and resumable processing.
 
-忠實翻譯核心提示詞受保護。GUI 只能追加錄音背景、正確術語和格式偏好，不能取消逐段完整輸出或改成摘要。
+The core fidelity prompt is protected. Recording context, preferred terminology, and style preferences are treated as low-priority data and cannot turn the task into a summary or omit source content.
 
-## 命令列
+## Command line
 
-直接帶入一個或多個檔案，不必修改 `app.py`：
+Process one or more files:
 
 ```bash
 python app.py speech/meeting.m4a speech/interview.mp3
 ```
 
-處理整個資料夾：
+Process a directory recursively:
 
 ```bash
 python app.py ./recordings --output-dir ./text
 ```
 
-加入語言、術語與錄音背景：
+Translate into Japanese:
+
+```bash
+python app.py speech/meeting.m4a --target-language ja
+```
+
+Provide expected source languages, terminology, and recording context:
 
 ```bash
 python app.py speech/meeting.m4a \
@@ -97,28 +103,22 @@ python app.py speech/meeting.m4a \
   --language en \
   --keyword OpenAI \
   --keyword "Responses API" \
-  --context "中英文混合的技術會議"
+  --context "A bilingual technical meeting"
 ```
 
-翻譯成其他語言（例如日文）：
+Create only a transcript and skip translation:
 
 ```bash
-python app.py speech/meeting.m4a --target-language ja
+python app.py speech/meeting.m4a --transcript-only
 ```
 
-`--language` 是音檔內容的語言提示，可重複使用；`--target-language` 是翻譯成品的單一目標語言，預設為 `zh-TW`。
+`--language` is a repeatable hint describing languages expected in the audio. `--target-language` selects the single translation target and defaults to `zh-TW`.
 
-查看所有選項：
+Run `python app.py --help` for every option. When no input is supplied, VoiceScribe scans `speech/` recursively. The default output root is `text/`.
 
-```bash
-python app.py --help
-```
+## Output structure
 
-未指定輸入時會遞迴掃描 `speech/`。預設輸出根目錄為 `text/`。
-
-## 結果結構
-
-每個音檔使用獨立資料夾：
+Each source gets its own directory:
 
 ```text
 text/
@@ -133,88 +133,89 @@ text/
         └── s00002.zh-TW.txt
 ```
 
-- `raw.txt`：依音訊片段順序合併的原始轉錄。
-- `final.txt`：通過段落完整性驗證的指定語言成品。
-- `manifest.json`：來源雜湊、設定雜湊、模型、狀態與錯誤。
-- `chunks/`：可續跑的音訊片段原始文字與翻譯文字。
+- `raw.txt` contains the merged transcript in audio-chunk order.
+- `final.txt` contains the validated translation, or the transcript when transcript-only mode is enabled.
+- `manifest.json` records source hashes, settings, mode, language, models, status, and errors.
+- `chunks/` contains resumable audio-chunk transcripts and translated text segments.
 
-如果不同來源具有相同檔名，第二個來源會自動加入來源雜湊後綴，避免覆寫。
+If two sources have the same filename but different content, VoiceScribe adds a source-hash suffix instead of overwriting the existing job.
 
-## 可續跑與失敗行為
+## Resuming and failure behavior
 
-- 來源 SHA-256 與 ASR 設定相同時，可以重用原始轉錄。
-- 只有翻譯設定改變時，會保留原始轉錄並重做翻譯。
-- 逾時、HTTP 429 與伺服器錯誤最多重試三次；認證和參數錯誤立即失敗。
-- 最終成品以原子替換寫入。失敗、取消或空白輸出不會覆蓋先前成功的 `final.txt`。
-- 暫存音訊無論成功或失敗都會清除。
+- Matching source and ASR settings reuse the raw transcript.
+- Translation-only setting changes preserve the raw transcript and rerun only translation.
+- Changing the target language invalidates translation cache without retranscribing the audio.
+- Switching between translated and transcript-only output cannot reuse an incompatible `final.txt`.
+- Timeouts, HTTP 429 responses, and server errors are retried up to three times by default.
+- Final files use atomic replacement. Failed, cancelled, incomplete, or empty translation results do not overwrite a previous successful result.
+- Temporary audio files are cleaned up after both success and failure.
 
-## 模型與提示參數
+## Models and language options
 
-預設模型：
-
-| 用途 | 預設值 |
+| Purpose | Default |
 | --- | --- |
-| 語音轉錄 | `gpt-transcribe` |
-| 文字翻譯 | `gpt-5.6-luna` |
-| 目標語言 | `zh-TW` |
+| Transcription | `gpt-transcribe` |
+| Translation | `gpt-5.6-luna` |
+| Target language | `zh-TW` |
 | Reasoning effort | `none` |
 | Text verbosity | `high` |
 
-可選轉錄模型：
+Supported transcription models:
 
 - `gpt-transcribe`
 - `gpt-4o-transcribe`
 - `gpt-4o-mini-transcribe`
 - `whisper-1`
 
-可選翻譯模型：
+Supported translation models:
 
 - `gpt-5.6-luna`
 - `gpt-5.6-terra`
 - `gpt-5.6-sol`
 
-對 `gpt-transcribe`，程式使用 `prompt`、`keywords`、`languages`。其他轉錄模型會依能力改用單一 `language` 與提示文字。
+Common target tags offered by the GUI are `zh-TW`, `zh-CN`, `en`, `ja`, `ko`, `es`, `fr`, `de`, `it`, and `pt-BR`. The field remains editable, so other valid BCP 47 tags are accepted.
 
-常用目標語言包括 `zh-TW`、`zh-CN`、`en`、`ja`、`ko`、`es`、`fr`、`de`、`it`、`pt-BR`。GUI 提供這些選項，也允許輸入其他有效的 BCP 47 語言代碼。
+For `gpt-transcribe`, VoiceScribe sends `prompt`, `keywords`, and `languages`. Other transcription models receive a single `language` value and prompt text according to their supported interface.
 
-## 開發與驗證
+## Development
 
-語法檢查：
+Check Python syntax:
 
 ```bash
 python -m py_compile app.py gui_app.py
 ```
 
-測試：
+Run the tests:
 
 ```bash
 pytest -q
 ```
 
-測試使用模擬 OpenAI 回應，不會產生付費 API 呼叫。
+Tests use mocked OpenAI responses and do not make paid API calls.
 
-## v2.4.2 更新內容
+## Version history
 
-- 新增 CLI `--target-language` 與 GUI 輸出語言選項，預設維持 `zh-TW`。
-- 翻譯提示、快取雜湊、片段檔名與 manifest 會跟隨目標語言。
-- 核心模型提示改用英文撰寫，方便維護多語言行為。
+### v2.4.3
 
-## v2.4.1 更新內容
+- Added transcript-only mode to both the CLI and GUI.
+- Made the primary README and CLI help English for a broader audience.
+- Added a complete Traditional Chinese companion README.
+- Added cache-safety tests for switching between transcript-only and translated output.
 
-- 將轉錄模型的空白回應視為無語音片段，不再因錄音尾端靜音導致整個作業失敗。
-- 空白片段亦可正確續跑，但所有片段都無內容時仍會回報錯誤。
+### v2.4.2
 
-## v2.4.0 更新內容
+- Added configurable target languages to the CLI and GUI while preserving `zh-TW` as the default.
+- Included the target language in prompts, cache hashes, segment filenames, and manifests.
+- Rewrote protected model instructions in English for multilingual maintenance.
 
-- CLI 改為直接接收檔案與資料夾，移除硬編碼檔名與個人提示詞。
-- ASR 預設升級為 `gpt-transcribe`。
-- 翻譯升級為 `gpt-5.6-luna`、Responses API、Structured Outputs 與 none reasoning。
-- 新增逐段完整性契約，避免模型偷偷摘要或省略內容。
-- 新增每檔結果分類、來源與設定雜湊、部分續跑及原子寫入。
-- 重做 GUI 工作台與執行緒事件傳遞。
-- 將音訊切割移至 FFmpeg 子程序，降低記憶體使用量。
-- `.env` 停止 Git 追蹤並加入安全範本。
+### v2.4.1
+
+- Treated blank ASR responses as silent chunks while still rejecting an entirely silent recording.
+
+### v2.4.0
+
+- Added direct file and directory CLI inputs, resumable processing, atomic output, structured translation validation, and low-memory FFmpeg segmentation.
 
 ## License
 
-本專案採用 MIT License，詳見 [LICENSE](LICENSE)。
+VoiceScribe is available under the [MIT License](LICENSE).

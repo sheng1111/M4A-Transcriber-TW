@@ -176,26 +176,37 @@ class TranscriptionApp:
         self.translation_model = tk.StringVar(value=DEFAULT_TRANSLATION_MODEL)
         self.target_language = tk.StringVar(value=DEFAULT_TARGET_LANGUAGE)
         self.languages = tk.StringVar()
+        self.transcript_only = tk.BooleanVar(value=False)
         self.max_size = tk.IntVar(value=20)
         self.max_duration = tk.IntVar(value=10)
         self.asr_workers = tk.IntVar(value=3)
         self.translation_workers = tk.IntVar(value=2)
+        self.translation_model_box = ttk.Combobox(
+            models,
+            textvariable=self.translation_model,
+            values=SUPPORTED_TRANSLATION_MODELS,
+            state="readonly",
+        )
+        self.target_language_box = ttk.Combobox(
+            models,
+            textvariable=self.target_language,
+            values=COMMON_TARGET_LANGUAGES,
+        )
         fields = [
             ("轉錄模型", ttk.Combobox(models, textvariable=self.transcription_model, values=SUPPORTED_TRANSCRIPTION_MODELS, state="readonly")),
-            ("翻譯模型", ttk.Combobox(models, textvariable=self.translation_model, values=SUPPORTED_TRANSLATION_MODELS, state="readonly")),
-            (
-                "輸出語言",
-                ttk.Combobox(
-                    models,
-                    textvariable=self.target_language,
-                    values=COMMON_TARGET_LANGUAGES,
-                ),
-            ),
+            ("翻譯模型 / Translation model", self.translation_model_box),
+            ("輸出語言 / Target language", self.target_language_box),
             ("音檔語言提示", ttk.Entry(models, textvariable=self.languages)),
         ]
         for row, (label, widget) in enumerate(fields):
             ttk.Label(models, text=label).grid(row=row, column=0, sticky="w", pady=3)
             widget.grid(row=row, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
+        ttk.Checkbutton(
+            models,
+            text="僅轉錄，不翻譯 / Transcript only",
+            variable=self.transcript_only,
+            command=self._toggle_transcript_only,
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(5, 3))
         numeric = [
             ("大小 MB", self.max_size, 5, 24),
             ("片段分鐘", self.max_duration, 1, 30),
@@ -203,7 +214,7 @@ class TranscriptionApp:
             ("翻譯並行", self.translation_workers, 1, 8),
         ]
         for index, (label, variable, minimum, maximum) in enumerate(numeric):
-            row = 4 + index // 2
+            row = 5 + index // 2
             column = (index % 2) * 2
             ttk.Label(models, text=label).grid(row=row, column=column, sticky="w", pady=3)
             ttk.Spinbox(models, from_=minimum, to=maximum, textvariable=variable, width=7).grid(
@@ -229,6 +240,12 @@ class TranscriptionApp:
             style="Muted.TLabel",
             wraplength=480,
         ).pack(anchor="w")
+
+    def _toggle_transcript_only(self) -> None:
+        transcript_only = self.transcript_only.get()
+        self.translation_model_box.configure(state="disabled" if transcript_only else "readonly")
+        self.target_language_box.configure(state="disabled" if transcript_only else "normal")
+        self.style_text.configure(state="disabled" if transcript_only else "normal")
 
     def _build_results(self, parent) -> None:
         header = ttk.Frame(parent, style="Surface.TFrame")
@@ -344,6 +361,7 @@ class TranscriptionApp:
             keywords=keywords,
             recording_context=self.context_text.get("1.0", tk.END).strip(),
             style_preference=self.style_text.get("1.0", tk.END).strip(),
+            transcript_only=self.transcript_only.get(),
             asr_workers=self.asr_workers.get(),
             translation_workers=self.translation_workers.get(),
             audio=AudioConfig(
@@ -510,6 +528,7 @@ class TranscriptionApp:
             "預設轉錄模型: gpt-transcribe\n"
             "預設翻譯模型: gpt-5.6-luna\n"
             f"預設輸出語言: {DEFAULT_TARGET_LANGUAGE}\n"
+            "支援僅轉錄模式 / Transcript-only mode\n"
             "推理強度: none\n\n"
             "結果依音檔分類，支援中斷續跑與原始轉錄保留。",
         )

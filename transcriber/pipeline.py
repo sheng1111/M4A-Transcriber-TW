@@ -106,10 +106,33 @@ class TranscriptionPipeline:
                 self._emit(progress, "asr_cached", source=source_path.name)
 
             self._check_stop(should_stop)
+            if config.transcript_only:
+                atomic_write_text(store.final_path, raw_text.rstrip() + "\n")
+                manifest["cache"].pop("translation", None)
+                manifest["cache"].pop("translation_in_progress", None)
+                manifest["translation_segments"] = {}
+                manifest["mode"] = "transcript_only"
+                manifest["target_language"] = None
+                manifest["status"] = "completed"
+                manifest["error"] = None
+                manifest["artifacts"] = {"raw": "raw.txt", "final": "final.txt"}
+                store.save_manifest(manifest)
+                self._emit(progress, "completed", source=source_path.name, path=str(store.final_path))
+                return ProcessingResult(
+                    source_path,
+                    store.root,
+                    store.raw_path,
+                    store.final_path,
+                    store.manifest_path,
+                    "completed",
+                    resumed,
+                )
+
             raw_hash = sha256_text(raw_text)
             translation_hash = config.stage_hash("translation", raw_hash)
             if (
                 config.resume
+                and manifest.get("mode", "translation") == "translation"
                 and manifest["cache"].get("translation") == translation_hash
                 and store.cached_text(store.final_path)
             ):
@@ -134,6 +157,7 @@ class TranscriptionPipeline:
                 raise RuntimeError("翻譯結果為空，未覆寫既有成品")
             atomic_write_text(store.final_path, final_text.rstrip() + "\n")
             manifest["cache"]["translation"] = translation_hash
+            manifest["mode"] = "translation"
             manifest["status"] = "completed"
             manifest["error"] = None
             manifest["artifacts"] = {"raw": "raw.txt", "final": "final.txt"}
@@ -353,6 +377,7 @@ class AudioProcessor:
         translation_model="gpt-5.6-luna",
         transcription_language="",
         target_language="zh-TW",
+        transcript_only=False,
         should_stop=None,
         **audio_filter_params,
     ):
@@ -372,6 +397,7 @@ class AudioProcessor:
             transcription_model=transcription_model,
             translation_model=translation_model,
             target_language=target_language,
+            transcript_only=transcript_only,
             languages=languages,
             keywords=keywords,
             style_preference=gpt_system_prompt or "",

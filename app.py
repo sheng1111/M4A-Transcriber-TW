@@ -33,18 +33,18 @@ __all__ = ["AudioProcessor", "build_parser", "discover_inputs", "main"]
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="將音檔轉錄並忠實翻譯為指定語言（預設臺灣繁體中文）",
+        description="Transcribe audio and optionally translate it (default target: zh-TW)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("inputs", nargs="*", help="音檔或資料夾；未指定時掃描 speech/")
-    parser.add_argument("-o", "--output-dir", default=os.getenv("TEXT_DIR", "./text"), help="結果根目錄")
-    parser.add_argument("--context", default="", help="錄音背景說明，不可包含翻譯指令")
-    parser.add_argument("--keyword", action="append", default=[], help="預期專有名詞，可重複指定")
-    parser.add_argument("--language", action="append", default=[], help="音檔的預期語言代碼，可重複指定")
+    parser.add_argument("inputs", nargs="*", help="Audio files or directories; scans speech/ by default")
+    parser.add_argument("-o", "--output-dir", default=os.getenv("TEXT_DIR", "./text"), help="Output root directory")
+    parser.add_argument("--context", default="", help="Recording context; must not contain translation instructions")
+    parser.add_argument("--keyword", action="append", default=[], help="Expected proper noun; may be repeated")
+    parser.add_argument("--language", action="append", default=[], help="Expected audio language code; may be repeated")
     parser.add_argument(
         "--target-language",
         default=DEFAULT_TARGET_LANGUAGE,
-        help="翻譯輸出的 BCP 47 語言代碼，例如 zh-TW、en、ja",
+        help="BCP 47 target language tag, for example zh-TW, en, or ja",
     )
     parser.add_argument(
         "--transcription-model",
@@ -56,12 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_TRANSLATION_MODELS,
         default=DEFAULT_TRANSLATION_MODEL,
     )
-    parser.add_argument("--style", default="", help="附加格式偏好，不可覆寫忠實翻譯規則")
-    parser.add_argument("--max-size-mb", type=int, default=20, help="單一上傳片段大小")
-    parser.add_argument("--max-duration-min", type=int, default=10, help="單一音訊片段長度")
-    parser.add_argument("--asr-workers", type=int, default=3, help="轉錄並行數")
-    parser.add_argument("--translation-workers", type=int, default=2, help="翻譯並行數")
-    parser.add_argument("--no-resume", action="store_true", help="忽略符合設定的既有結果")
+    parser.add_argument("--style", default="", help="Formatting preference; cannot override fidelity rules")
+    parser.add_argument("--transcript-only", action="store_true", help="Skip translation and write the transcript to final.txt")
+    parser.add_argument("--max-size-mb", type=int, default=20, help="Maximum upload chunk size")
+    parser.add_argument("--max-duration-min", type=int, default=10, help="Maximum audio chunk duration")
+    parser.add_argument("--asr-workers", type=int, default=3, help="Concurrent transcription workers")
+    parser.add_argument("--translation-workers", type=int, default=2, help="Concurrent translation workers")
+    parser.add_argument("--no-resume", action="store_true", help="Ignore reusable results with matching settings")
     parser.add_argument("--version", action="version", version=f"%(prog)s {APP_VERSION}")
     return parser
 
@@ -121,6 +122,7 @@ def main(argv=None) -> int:
             keywords=tuple(args.keyword),
             recording_context=args.context,
             style_preference=args.style,
+            transcript_only=args.transcript_only,
             asr_workers=args.asr_workers,
             translation_workers=args.translation_workers,
             resume=not args.no_resume,

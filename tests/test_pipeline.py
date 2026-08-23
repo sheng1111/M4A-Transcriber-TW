@@ -87,6 +87,39 @@ def test_target_language_changes_translation_cache_and_segment_names(tmp_path):
     assert manifest["target_language"] == "en"
 
 
+def test_transcript_only_skips_translation_and_writes_final(tmp_path):
+    source = tmp_path / "meeting.m4a"
+    source.write_bytes(b"recording")
+    service = FakeService()
+    pipeline = TranscriptionPipeline(service=service, chunker=FakeChunker(tmp_path))
+
+    result = pipeline.process(
+        source,
+        tmp_path / "text",
+        ProcessingConfig(transcript_only=True),
+    )
+
+    assert service.translate_calls == 0
+    assert result.final_path.read_text(encoding="utf-8") == result.raw_path.read_text(encoding="utf-8")
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["mode"] == "transcript_only"
+    assert manifest["target_language"] is None
+
+
+def test_translation_after_transcript_only_does_not_reuse_raw_final(tmp_path):
+    source = tmp_path / "meeting.m4a"
+    source.write_bytes(b"recording")
+    service = FakeService()
+    pipeline = TranscriptionPipeline(service=service, chunker=FakeChunker(tmp_path))
+
+    pipeline.process(source, tmp_path / "text", ProcessingConfig())
+    pipeline.process(source, tmp_path / "text", ProcessingConfig(transcript_only=True))
+    result = pipeline.process(source, tmp_path / "text", ProcessingConfig())
+
+    assert service.translate_calls == 2
+    assert "繁中" in result.final_path.read_text(encoding="utf-8")
+
+
 def test_pipeline_ignores_a_silent_chunk_when_other_chunks_have_speech(tmp_path):
     source = tmp_path / "meeting.m4a"
     source.write_bytes(b"recording")

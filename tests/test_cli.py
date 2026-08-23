@@ -30,3 +30,8 @@ def test_help_and_defaults_do_not_require_api_key():
 def test_cli_accepts_a_custom_target_language():
     args = build_parser().parse_args(["sample.m4a", "--target-language", "ja"])
     assert args.target_language == "ja"
+
+
+def test_cli_accepts_transcript_only_mode():
+    args = build_parser().parse_args(["sample.m4a", "--transcript-only"])
+    assert args.transcript_only is True
