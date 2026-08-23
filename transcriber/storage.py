@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .config import APP_VERSION
+from .config import APP_VERSION, DEFAULT_TARGET_LANGUAGE
 
 
 def sha256_file(path: Path, block_size: int = 1024 * 1024) -> str:
@@ -100,8 +100,11 @@ class JobStore:
     def raw_chunk_path(self, index: int) -> Path:
         return self.chunks_dir / f"a{index:04d}.raw.txt"
 
-    def translated_segment_path(self, segment_id: str) -> Path:
-        return self.chunks_dir / f"{segment_id}.zh-TW.txt"
+    def translated_segment_path(
+        self, segment_id: str, target_language: str = DEFAULT_TARGET_LANGUAGE
+    ) -> Path:
+        # Language tags are validated by ProcessingConfig; safe_stem adds defense in depth.
+        return self.chunks_dir / f"{segment_id}.{safe_stem(target_language)}.txt"
 
     def load_manifest(self) -> Dict[str, Any]:
         try:

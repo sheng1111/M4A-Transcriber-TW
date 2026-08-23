@@ -24,3 +24,9 @@ def test_help_and_defaults_do_not_require_api_key():
     args = build_parser().parse_args(["sample.m4a"])
     assert args.transcription_model == "gpt-transcribe"
     assert args.translation_model == "gpt-5.6-luna"
+    assert args.target_language == "zh-TW"
+
+
+def test_cli_accepts_a_custom_target_language():
+    args = build_parser().parse_args(["sample.m4a", "--target-language", "ja"])
+    assert args.target_language == "ja"

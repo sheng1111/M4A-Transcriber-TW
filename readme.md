@@ -1,13 +1,14 @@
 # VoiceScribe
 
-VoiceScribe 是以 OpenAI API 為核心的音檔轉錄與臺灣繁體中文翻譯工具，提供命令列與 Tkinter 圖形介面。v2.4.1 著重內容忠實度、可續跑、錯誤可見性、低記憶體音訊處理與清楚的結果分類。
+VoiceScribe 是以 OpenAI API 為核心的多語言音檔轉錄與翻譯工具，提供命令列與 Tkinter 圖形介面。預設輸出臺灣繁體中文，也可由使用者指定其他目標語言。
 
-目前版本：`2.4.1`
+目前版本：`2.4.2`
 
 ## 主要功能
 
 - 預設使用 OpenAI `gpt-transcribe` 進行檔案轉錄。
 - 預設使用 `gpt-5.6-luna` 與 Responses API 翻譯，固定 `reasoning.effort="none"`。
+- 翻譯預設輸出 `zh-TW`，CLI 與 GUI 均可指定其他 BCP 47 目標語言代碼。
 - 將原始轉錄切成帶 ID 的文字段落，要求模型逐段回傳；缺段、空白實質段落或錯誤 ID 不會寫成最終成品。
 - 保留原始轉錄、各片段結果與處理 manifest，失敗後可從成功步驟繼續。
 - 使用 FFmpeg 直接切割為 16kHz、單聲道、96kbps MP3，不把整個長音檔載入 Python 記憶體。
@@ -99,6 +100,14 @@ python app.py speech/meeting.m4a \
   --context "中英文混合的技術會議"
 ```
 
+翻譯成其他語言（例如日文）：
+
+```bash
+python app.py speech/meeting.m4a --target-language ja
+```
+
+`--language` 是音檔內容的語言提示，可重複使用；`--target-language` 是翻譯成品的單一目標語言，預設為 `zh-TW`。
+
 查看所有選項：
 
 ```bash
@@ -125,7 +134,7 @@ text/
 ```
 
 - `raw.txt`：依音訊片段順序合併的原始轉錄。
-- `final.txt`：通過段落完整性驗證的臺灣繁體中文成品。
+- `final.txt`：通過段落完整性驗證的指定語言成品。
 - `manifest.json`：來源雜湊、設定雜湊、模型、狀態與錯誤。
 - `chunks/`：可續跑的音訊片段原始文字與翻譯文字。
 
@@ -146,7 +155,8 @@ text/
 | 用途 | 預設值 |
 | --- | --- |
 | 語音轉錄 | `gpt-transcribe` |
-| 繁中翻譯 | `gpt-5.6-luna` |
+| 文字翻譯 | `gpt-5.6-luna` |
+| 目標語言 | `zh-TW` |
 | Reasoning effort | `none` |
 | Text verbosity | `high` |
 
@@ -165,6 +175,8 @@ text/
 
 對 `gpt-transcribe`，程式使用 `prompt`、`keywords`、`languages`。其他轉錄模型會依能力改用單一 `language` 與提示文字。
 
+常用目標語言包括 `zh-TW`、`zh-CN`、`en`、`ja`、`ko`、`es`、`fr`、`de`、`it`、`pt-BR`。GUI 提供這些選項，也允許輸入其他有效的 BCP 47 語言代碼。
+
 ## 開發與驗證
 
 語法檢查：
@@ -180,6 +192,12 @@ pytest -q
 ```
 
 測試使用模擬 OpenAI 回應，不會產生付費 API 呼叫。
+
+## v2.4.2 更新內容
+
+- 新增 CLI `--target-language` 與 GUI 輸出語言選項，預設維持 `zh-TW`。
+- 翻譯提示、快取雜湊、片段檔名與 manifest 會跟隨目標語言。
+- 核心模型提示改用英文撰寫，方便維護多語言行為。
 
 ## v2.4.1 更新內容
 

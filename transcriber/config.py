@@ -4,13 +4,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Tuple
 
 
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.4.2"
 DEFAULT_TRANSCRIPTION_MODEL = "gpt-transcribe"
 DEFAULT_TRANSLATION_MODEL = "gpt-5.6-luna"
+DEFAULT_TARGET_LANGUAGE = "zh-TW"
+COMMON_TARGET_LANGUAGES = (
+    "zh-TW",
+    "zh-CN",
+    "en",
+    "ja",
+    "ko",
+    "es",
+    "fr",
+    "de",
+    "it",
+    "pt-BR",
+)
 SUPPORTED_TRANSCRIPTION_MODELS = (
     "gpt-transcribe",
     "gpt-4o-transcribe",
@@ -61,6 +75,7 @@ class ProcessingConfig:
 
     transcription_model: str = DEFAULT_TRANSCRIPTION_MODEL
     translation_model: str = DEFAULT_TRANSLATION_MODEL
+    target_language: str = DEFAULT_TARGET_LANGUAGE
     languages: Tuple[str, ...] = field(default_factory=tuple)
     keywords: Tuple[str, ...] = field(default_factory=tuple)
     recording_context: str = ""
@@ -72,6 +87,7 @@ class ProcessingConfig:
     audio: AudioConfig = field(default_factory=AudioConfig)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "target_language", self.target_language.strip())
         object.__setattr__(self, "languages", _clean_items(self.languages))
         object.__setattr__(self, "keywords", _clean_items(self.keywords))
 
@@ -80,6 +96,10 @@ class ProcessingConfig:
             raise ValueError(f"不支援的轉錄模型: {self.transcription_model}")
         if self.translation_model not in SUPPORTED_TRANSLATION_MODELS:
             raise ValueError(f"不支援的翻譯模型: {self.translation_model}")
+        if not self.target_language:
+            raise ValueError("目標語言不可空白")
+        if not re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", self.target_language):
+            raise ValueError(f"目標語言代碼格式無效: {self.target_language}")
         if not 1 <= self.asr_workers <= 8 or not 1 <= self.translation_workers <= 8:
             raise ValueError("並行數必須介於 1 和 8")
         if not 1 <= self.retry_attempts <= 6:
@@ -102,6 +122,7 @@ class ProcessingConfig:
         elif stage == "translation":
             payload = {
                 "model": self.translation_model,
+                "target_language": self.target_language,
                 "keywords": self.keywords,
                 "context": self.recording_context,
                 "style": self.style_preference,

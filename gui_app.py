@@ -18,6 +18,8 @@ from dotenv import load_dotenv, set_key
 from transcriber.config import (
     APP_VERSION,
     AudioConfig,
+    COMMON_TARGET_LANGUAGES,
+    DEFAULT_TARGET_LANGUAGE,
     DEFAULT_TRANSCRIPTION_MODEL,
     DEFAULT_TRANSLATION_MODEL,
     ProcessingConfig,
@@ -172,6 +174,7 @@ class TranscriptionApp:
         models.pack(fill="x", pady=(12, 0))
         self.transcription_model = tk.StringVar(value=DEFAULT_TRANSCRIPTION_MODEL)
         self.translation_model = tk.StringVar(value=DEFAULT_TRANSLATION_MODEL)
+        self.target_language = tk.StringVar(value=DEFAULT_TARGET_LANGUAGE)
         self.languages = tk.StringVar()
         self.max_size = tk.IntVar(value=20)
         self.max_duration = tk.IntVar(value=10)
@@ -180,7 +183,15 @@ class TranscriptionApp:
         fields = [
             ("轉錄模型", ttk.Combobox(models, textvariable=self.transcription_model, values=SUPPORTED_TRANSCRIPTION_MODELS, state="readonly")),
             ("翻譯模型", ttk.Combobox(models, textvariable=self.translation_model, values=SUPPORTED_TRANSLATION_MODELS, state="readonly")),
-            ("語言提示", ttk.Entry(models, textvariable=self.languages)),
+            (
+                "輸出語言",
+                ttk.Combobox(
+                    models,
+                    textvariable=self.target_language,
+                    values=COMMON_TARGET_LANGUAGES,
+                ),
+            ),
+            ("音檔語言提示", ttk.Entry(models, textvariable=self.languages)),
         ]
         for row, (label, widget) in enumerate(fields):
             ttk.Label(models, text=label).grid(row=row, column=0, sticky="w", pady=3)
@@ -192,7 +203,7 @@ class TranscriptionApp:
             ("翻譯並行", self.translation_workers, 1, 8),
         ]
         for index, (label, variable, minimum, maximum) in enumerate(numeric):
-            row = 3 + index // 2
+            row = 4 + index // 2
             column = (index % 2) * 2
             ttk.Label(models, text=label).grid(row=row, column=column, sticky="w", pady=3)
             ttk.Spinbox(models, from_=minimum, to=maximum, textvariable=variable, width=7).grid(
@@ -328,6 +339,7 @@ class TranscriptionApp:
         config = ProcessingConfig(
             transcription_model=self.transcription_model.get(),
             translation_model=self.translation_model.get(),
+            target_language=self.target_language.get(),
             languages=languages,
             keywords=keywords,
             recording_context=self.context_text.get("1.0", tk.END).strip(),
@@ -497,6 +509,7 @@ class TranscriptionApp:
             f"VoiceScribe\n版本 {APP_VERSION}\n\n"
             "預設轉錄模型: gpt-transcribe\n"
             "預設翻譯模型: gpt-5.6-luna\n"
+            f"預設輸出語言: {DEFAULT_TARGET_LANGUAGE}\n"
             "推理強度: none\n\n"
             "結果依音檔分類，支援中斷續跑與原始轉錄保留。",
         )

@@ -2,7 +2,7 @@
 
 ## Project
 
-VoiceScribe v2.4.1 converts recorded audio into a raw transcript and a faithful Taiwan Traditional Chinese result. `app.py` and `gui_app.py` are entry points; reusable code lives in `transcriber/`.
+VoiceScribe v2.4.2 converts recorded audio into a raw transcript and a faithful translated result. The default target is Taiwan Traditional Chinese (`zh-TW`), and users may select another BCP 47 language tag. `app.py` and `gui_app.py` are entry points; reusable code lives in `transcriber/`.
 
 ## Architecture
 

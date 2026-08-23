@@ -15,6 +15,7 @@ from transcriber import AudioProcessor
 from transcriber.config import (
     APP_VERSION,
     AudioConfig,
+    DEFAULT_TARGET_LANGUAGE,
     DEFAULT_TRANSCRIPTION_MODEL,
     DEFAULT_TRANSLATION_MODEL,
     ProcessingConfig,
@@ -32,14 +33,19 @@ __all__ = ["AudioProcessor", "build_parser", "discover_inputs", "main"]
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="將音檔轉錄並忠實翻譯為臺灣繁體中文",
+        description="將音檔轉錄並忠實翻譯為指定語言（預設臺灣繁體中文）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("inputs", nargs="*", help="音檔或資料夾；未指定時掃描 speech/")
     parser.add_argument("-o", "--output-dir", default=os.getenv("TEXT_DIR", "./text"), help="結果根目錄")
     parser.add_argument("--context", default="", help="錄音背景說明，不可包含翻譯指令")
     parser.add_argument("--keyword", action="append", default=[], help="預期專有名詞，可重複指定")
-    parser.add_argument("--language", action="append", default=[], help="預期語言代碼，可重複指定")
+    parser.add_argument("--language", action="append", default=[], help="音檔的預期語言代碼，可重複指定")
+    parser.add_argument(
+        "--target-language",
+        default=DEFAULT_TARGET_LANGUAGE,
+        help="翻譯輸出的 BCP 47 語言代碼，例如 zh-TW、en、ja",
+    )
     parser.add_argument(
         "--transcription-model",
         choices=SUPPORTED_TRANSCRIPTION_MODELS,
@@ -110,6 +116,7 @@ def main(argv=None) -> int:
         config = ProcessingConfig(
             transcription_model=args.transcription_model,
             translation_model=args.translation_model,
+            target_language=args.target_language,
             languages=tuple(args.language),
             keywords=tuple(args.keyword),
             recording_context=args.context,

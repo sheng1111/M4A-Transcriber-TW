@@ -12,12 +12,18 @@ def test_config_hashes_invalidate_only_relevant_stage():
     assert base.stage_hash("asr") == style_changed.stage_hash("asr")
     assert base.stage_hash("translation", "raw") != style_changed.stage_hash("translation", "raw")
 
+    language_changed = replace(base, target_language="en")
+    assert base.stage_hash("asr") == language_changed.stage_hash("asr")
+    assert base.stage_hash("translation", "raw") != language_changed.stage_hash("translation", "raw")
+
 
 def test_config_rejects_invalid_keyword_and_audio_limit():
     with pytest.raises(ValueError, match="關鍵字"):
         ProcessingConfig(keywords=("bad\nterm",)).validate()
     with pytest.raises(ValueError, match="片段大小"):
         ProcessingConfig(audio=AudioConfig(max_size_mb=25)).validate()
+    with pytest.raises(ValueError, match="目標語言"):
+        ProcessingConfig(target_language="English (US)").validate()
 
 
 def test_split_transcript_preserves_all_text_and_stable_ids():

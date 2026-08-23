@@ -62,11 +62,29 @@ def test_pipeline_writes_classified_artifacts_and_resumes(tmp_path):
     assert "繁中" in first.final_path.read_text(encoding="utf-8")
     assert first.manifest_path.exists()
     assert list((first.job_dir / "chunks").glob("*.raw.txt"))
+    assert list((first.job_dir / "chunks").glob("*.zh-TW.txt"))
     calls = (service.transcribe_calls, service.translate_calls, chunker.calls)
 
     second = pipeline.process(source, tmp_path / "text", config)
     assert second.resumed is True
     assert (service.transcribe_calls, service.translate_calls, chunker.calls) == calls
+
+
+def test_target_language_changes_translation_cache_and_segment_names(tmp_path):
+    source = tmp_path / "meeting.m4a"
+    source.write_bytes(b"recording")
+    service = FakeService()
+    pipeline = TranscriptionPipeline(service=service, chunker=FakeChunker(tmp_path))
+
+    first = pipeline.process(source, tmp_path / "text", ProcessingConfig())
+    pipeline.process(source, tmp_path / "text", ProcessingConfig(target_language="en"))
+
+    assert service.transcribe_calls == 2
+    assert service.translate_calls == 2
+    assert list((first.job_dir / "chunks").glob("*.zh-TW.txt"))
+    assert list((first.job_dir / "chunks").glob("*.en.txt"))
+    manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["target_language"] == "en"
 
 
 def test_pipeline_ignores_a_silent_chunk_when_other_chunks_have_speech(tmp_path):

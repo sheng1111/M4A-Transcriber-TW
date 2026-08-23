@@ -265,7 +265,9 @@ class TranscriptionPipeline:
             segment_id = segment["id"]
             cached = None
             if config.resume and prior_records.get(segment_id, {}).get("status") == "completed":
-                cached = store.cached_text(store.translated_segment_path(segment_id))
+                cached = store.cached_text(
+                    store.translated_segment_path(segment_id, config.target_language)
+                )
             if cached is None:
                 missing.append(segment)
             else:
@@ -288,7 +290,10 @@ class TranscriptionPipeline:
                         segment_id = item["id"]
                         text = item["text"].strip()
                         translated[segment_id] = text
-                        atomic_write_text(store.translated_segment_path(segment_id), text + ("\n" if text else ""))
+                        atomic_write_text(
+                            store.translated_segment_path(segment_id, config.target_language),
+                            text + ("\n" if text else ""),
+                        )
                         prior_records[segment_id] = {"status": "completed", "characters": len(text)}
                         completed_count += 1
                 except Exception as exc:
@@ -320,13 +325,14 @@ class TranscriptionPipeline:
             raise RuntimeError("翻譯段落不完整")
         final_text = normalize_output("\n\n".join(translated[segment_id] for segment_id in expected_ids))
         manifest["translation_segments"] = prior_records
+        manifest["target_language"] = config.target_language
         manifest["cache"].pop("translation_in_progress", None)
         store.save_manifest(manifest)
         return final_text
 
 
 class AudioProcessor:
-    """Compatibility wrapper around the v2.4 pipeline."""
+    """Compatibility wrapper around the reusable transcription pipeline."""
 
     def __init__(self, audio_dir: str = "./speech", text_dir: str = "./text", api_key: str = "") -> None:
         load_dotenv(".env")
@@ -346,6 +352,7 @@ class AudioProcessor:
         transcription_model="gpt-transcribe",
         translation_model="gpt-5.6-luna",
         transcription_language="",
+        target_language="zh-TW",
         should_stop=None,
         **audio_filter_params,
     ):
@@ -364,6 +371,7 @@ class AudioProcessor:
         config = ProcessingConfig(
             transcription_model=transcription_model,
             translation_model=translation_model,
+            target_language=target_language,
             languages=languages,
             keywords=keywords,
             style_preference=gpt_system_prompt or "",
