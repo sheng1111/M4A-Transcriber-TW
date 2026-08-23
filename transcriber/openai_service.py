@@ -90,7 +90,7 @@ class OpenAIService:
                 text = str(getattr(response, "text", ""))
             text = text.strip()
             if not text:
-                raise RuntimeError("轉錄模型回傳空白內容")
+                LOGGER.info("轉錄模型未偵測到語音，將此片段視為空白")
             return text
 
         return self._call_with_retry("語音轉錄", operation)

@@ -192,9 +192,10 @@ class TranscriptionPipeline:
                     and manifest["cache"].get("asr_in_progress") == asr_hash
                     and cached_record.get("status") == "completed"
                 ):
-                    cached = store.cached_text(cached_path)
-                    if cached:
-                        return cached
+                    try:
+                        return cached_path.read_text(encoding="utf-8").strip()
+                    except OSError:
+                        pass
                 return self.service.transcribe(audio_path, config)
 
             errors: List[Exception] = []

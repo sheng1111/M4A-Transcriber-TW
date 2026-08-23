@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Iterable, Tuple
 
 
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 DEFAULT_TRANSCRIPTION_MODEL = "gpt-transcribe"
 DEFAULT_TRANSLATION_MODEL = "gpt-5.6-luna"
 SUPPORTED_TRANSCRIPTION_MODELS = (

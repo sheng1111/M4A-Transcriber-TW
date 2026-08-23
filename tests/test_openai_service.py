@@ -8,12 +8,13 @@ from transcriber.openai_service import OpenAIService, TranslationContractError
 
 
 class FakeTranscriptions:
-    def __init__(self):
+    def __init__(self, text="raw transcript"):
+        self.text = text
         self.calls = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(text="raw transcript")
+        return SimpleNamespace(text=self.text)
 
 
 class FakeResponses:
@@ -26,8 +27,8 @@ class FakeResponses:
         return SimpleNamespace(output_text=json.dumps(self.payloads.pop(0), ensure_ascii=False))
 
 
-def fake_client(payloads=()):
-    transcriptions = FakeTranscriptions()
+def fake_client(payloads=(), transcription_text="raw transcript"):
+    transcriptions = FakeTranscriptions(transcription_text)
     responses = FakeResponses(payloads)
     return SimpleNamespace(
         audio=SimpleNamespace(transcriptions=transcriptions),
@@ -54,6 +55,16 @@ def test_gpt_transcribe_uses_keywords_and_multiple_languages(tmp_path):
         "languages": ["zh", "en"],
     }
     assert "language" not in call
+
+
+def test_empty_transcription_is_a_valid_silent_chunk(tmp_path):
+    audio = tmp_path / "silent.mp3"
+    audio.write_bytes(b"audio")
+    client = fake_client(transcription_text="  \n")
+    service = OpenAIService(client=client, retry_attempts=3, sleep=lambda _: None)
+
+    assert service.transcribe(audio, ProcessingConfig()) == ""
+    assert len(client.audio.transcriptions.calls) == 1
 
 
 def test_translation_sets_luna_none_high_and_validates_ids():

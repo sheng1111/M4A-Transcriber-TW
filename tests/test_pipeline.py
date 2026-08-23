@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,37 @@ def test_pipeline_writes_classified_artifacts_and_resumes(tmp_path):
     second = pipeline.process(source, tmp_path / "text", config)
     assert second.resumed is True
     assert (service.transcribe_calls, service.translate_calls, chunker.calls) == calls
+
+
+def test_pipeline_ignores_a_silent_chunk_when_other_chunks_have_speech(tmp_path):
+    source = tmp_path / "meeting.m4a"
+    source.write_bytes(b"recording")
+    service = FakeService()
+
+    def transcribe(audio_path, config):
+        service.transcribe_calls += 1
+        return "" if Path(audio_path).stem == "chunk_0001" else "spoken content."
+
+    service.transcribe = transcribe
+    pipeline = TranscriptionPipeline(service=service, chunker=FakeChunker(tmp_path))
+
+    result = pipeline.process(source, tmp_path / "text", ProcessingConfig())
+
+    assert result.status == "completed"
+    assert result.raw_path.read_text(encoding="utf-8") == "spoken content.\n"
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert [chunk["characters"] for chunk in manifest["audio_chunks"]] == [15, 0]
+
+
+def test_pipeline_rejects_an_entirely_silent_recording(tmp_path):
+    source = tmp_path / "silent.m4a"
+    source.write_bytes(b"recording")
+    service = FakeService()
+    service.transcribe = lambda audio_path, config: ""
+    pipeline = TranscriptionPipeline(service=service, chunker=FakeChunker(tmp_path))
+
+    with pytest.raises(RuntimeError, match="所有音訊片段皆為空白"):
+        pipeline.process(source, tmp_path / "text", ProcessingConfig())
 
 
 def test_failed_new_translation_does_not_overwrite_previous_final(tmp_path):
